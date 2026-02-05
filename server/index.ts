@@ -172,6 +172,64 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+// ========= Helpers: normalize gateway data for frontend =========
+
+function inferSessionKind(session: any): string {
+  const key = session.key || session.sessionKey || ''
+  if (key.includes(':subagent:')) return 'subagent'
+  if (key.includes(':cron:')) return 'cron'
+  if (key.endsWith(':main')) return 'main'
+  return session.kind === 'other' ? 'main' : (session.kind || 'other')
+}
+
+function normalizeSession(s: any): any {
+  // Extract last message timestamps for activity
+  const messages = (s.messages || []).map((m: any) => {
+    const content = Array.isArray(m.content)
+      ? m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join(' ')
+      : (typeof m.content === 'string' ? m.content : '')
+    return {
+      role: m.role,
+      content: content.slice(0, 500),
+      timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : undefined,
+    }
+  })
+
+  return {
+    sessionKey: s.key || s.sessionKey,
+    kind: inferSessionKind(s),
+    status: 'active',
+    lastActivity: s.updatedAt ? new Date(s.updatedAt).toISOString() : undefined,
+    messageCount: s.totalTokens ? Math.ceil(s.totalTokens / 500) : 0, // rough estimate
+    model: s.model,
+    label: s.label,
+    totalTokens: s.totalTokens,
+    contextTokens: s.contextTokens,
+    recentMessages: messages,
+  }
+}
+
+function aggregateUsage(sessions: any[]): any {
+  let inputTokens = 0
+  let outputTokens = 0
+  let totalCost = 0
+  let model = ''
+
+  for (const s of sessions) {
+    if (!model && s.model) model = s.model
+    // Sum usage from recent messages
+    for (const m of (s.messages || [])) {
+      if (m.usage) {
+        inputTokens += (m.usage.input || 0) + (m.usage.cacheRead || 0)
+        outputTokens += m.usage.output || 0
+        if (m.usage.cost?.total) totalCost += m.usage.cost.total
+      }
+    }
+  }
+
+  return { model, inputTokens, outputTokens, cost: totalCost > 0 ? totalCost : undefined }
+}
+
 // ========= API Routes =========
 
 app.get('/api/sessions', async (_req, res) => {
@@ -180,7 +238,10 @@ app.get('/api/sessions', async (_req, res) => {
       activeMinutes: 1440, // last 24h
       messageLimit: 3 
     })
-    res.json(result)
+    // Normalize session data for frontend
+    const raw = result?.sessions || (Array.isArray(result) ? result : [])
+    const sessions = raw.map(normalizeSession)
+    res.json({ count: sessions.length, sessions })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -193,17 +254,31 @@ app.get('/api/sessions/:key/history', async (req, res) => {
       limit: 50,
       includeTools: false
     })
-    res.json(result)
+    // Normalize messages
+    const messages = (result?.messages || (Array.isArray(result) ? result : []))
+      .map((m: any) => ({
+        role: m.role,
+        content: Array.isArray(m.content)
+          ? m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n')
+          : (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
+        timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : undefined,
+      }))
+    res.json({ messages })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
 })
 
-app.get('/api/session-status', async (req, res) => {
+app.get('/api/session-status', async (_req, res) => {
   try {
-    const sessionKey = req.query.sessionKey as string | undefined
-    const result = await invokeGateway('session_status', sessionKey ? { sessionKey } : {})
-    res.json(result)
+    // Get usage data from sessions_list instead of session_status (which returns text)
+    const result = await invokeGateway('sessions_list', { 
+      activeMinutes: 1440, 
+      messageLimit: 5 
+    })
+    const raw = result?.sessions || (Array.isArray(result) ? result : [])
+    const usage = aggregateUsage(raw)
+    res.json(usage)
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -212,7 +287,21 @@ app.get('/api/session-status', async (req, res) => {
 app.get('/api/cron', async (_req, res) => {
   try {
     const result = await invokeGateway('cron', { action: 'list', includeDisabled: true })
-    res.json(result)
+    // Normalize cron job format for frontend
+    const rawJobs = result?.jobs || (Array.isArray(result) ? result : [])
+    const jobs = rawJobs.map((j: any) => ({
+      id: j.id,
+      name: j.name || j.id,
+      text: j.payload?.text || j.text,
+      schedule: j.schedule?.expr || j.schedule || '',
+      enabled: j.enabled !== false,
+      lastRun: j.state?.lastRunAtMs ? new Date(j.state.lastRunAtMs).toISOString() : undefined,
+      nextRun: j.state?.nextRunAtMs ? new Date(j.state.nextRunAtMs).toISOString() : undefined,
+      lastStatus: j.state?.lastStatus,
+      model: j.model,
+      channel: j.channel,
+    }))
+    res.json({ jobs })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
