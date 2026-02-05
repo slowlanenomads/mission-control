@@ -1,17 +1,40 @@
 import React from 'react'
 import { Routes, Route } from 'react-router-dom'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import Sessions from './pages/Sessions'
 import CronJobs from './pages/CronJobs'
 import Memory from './pages/Memory'
 import SettingsPage from './pages/SettingsPage'
+import Todos from './pages/Todos'
+import Login from './pages/Login'
 
-export default function App() {
+function AppShell() {
+  const { user, loading, needsSetup, logout } = useAuth()
+
+  // Loading spinner
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-center">
+          <span className="text-4xl mb-4 block">🦞</span>
+          <div className="w-6 h-6 border-2 border-gray-700 border-t-gray-400 rounded-full animate-spin mx-auto" />
+        </div>
+      </div>
+    )
+  }
+
+  // Not authenticated — show login/setup
+  if (!user || needsSetup) {
+    return <Login />
+  }
+
+  // Authenticated — show dashboard
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      <Sidebar />
-      <div className="ml-60">
+      <Sidebar onLogout={logout} username={user.username} />
+      <div className="ml-56">
         <header className="sticky top-0 z-40 bg-gray-950/80 backdrop-blur-md border-b border-gray-800/50">
           <div className="flex items-center justify-between px-8 py-4">
             <div className="flex items-center gap-3">
@@ -31,11 +54,20 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/cron" element={<CronJobs />} />
+            <Route path="/todos" element={<Todos />} />
             <Route path="/memory" element={<Memory />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
   )
 }

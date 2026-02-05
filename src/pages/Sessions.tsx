@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { MessageSquare, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
+import { SkeletonSessionRow } from '../components/Skeleton'
 import { useApi } from '../hooks/useApi'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -19,14 +20,14 @@ interface HistoryMessage {
   timestamp: string
 }
 
-function kindColor(kind: string): 'blue' | 'purple' | 'orange' | 'gray' {
+function kindColor(kind: string): string {
   if (kind === 'main') return 'blue'
   if (kind === 'subagent') return 'purple'
   if (kind === 'cron') return 'orange'
   return 'gray'
 }
 
-function statusColor(status: string): 'green' | 'yellow' | 'gray' {
+function statusColor(status: string): string {
   if (status === 'active') return 'green'
   if (status === 'idle') return 'yellow'
   return 'gray'
@@ -50,12 +51,12 @@ function SessionRow({ session }: { session: Session }) {
           {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </span>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 mb-1">
-            <span className="font-mono text-sm text-gray-200 truncate max-w-[300px]">{session.sessionKey}</span>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
+            <span className="font-mono text-sm text-gray-200 truncate max-w-[200px] sm:max-w-[300px]">{session.sessionKey}</span>
             <StatusBadge color={kindColor(session.kind)}>{session.kind}</StatusBadge>
             <StatusBadge color={statusColor(session.status)} dot>{session.status}</StatusBadge>
           </div>
-          <div className="flex items-center gap-4 text-xs text-gray-500">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs text-gray-500">
             <span>{session.messageCount} messages</span>
             {session.model && <span className="font-mono">{session.model}</span>}
             {session.lastActivity && (
@@ -63,7 +64,7 @@ function SessionRow({ session }: { session: Session }) {
             )}
           </div>
         </div>
-        <MessageSquare className="w-4 h-4 text-gray-600" />
+        <MessageSquare className="w-4 h-4 text-gray-600 hidden sm:block" />
       </button>
       {expanded && (
         <div className="border-t border-gray-800 bg-gray-950/50">
@@ -116,7 +117,9 @@ export default function Sessions() {
         </button>
       </div>
       {loading && sessionList.length === 0 ? (
-        <div className="text-center py-20 text-gray-500">Loading sessions...</div>
+        <div className="space-y-3">
+          {[...Array(4)].map((_, i) => <SkeletonSessionRow key={i} />)}
+        </div>
       ) : sessionList.length === 0 ? (
         <div className="text-center py-20 text-gray-500">No sessions found</div>
       ) : (
