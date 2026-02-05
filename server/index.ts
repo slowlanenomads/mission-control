@@ -126,7 +126,20 @@ async function invokeGateway(tool: string, args: Record<string, any> = {}) {
     },
     body: JSON.stringify({ tool, args }),
   })
-  return res.json()
+  const raw = await res.json()
+
+  // Unwrap gateway envelope: {ok, result: {content: [{text: "..."}], details: {...}}}
+  if (raw?.ok && raw?.result) {
+    // Prefer details (already parsed) over content text
+    if (raw.result.details !== undefined) return raw.result.details
+    // Fall back to parsing the text content
+    const textContent = raw.result.content?.find((c: any) => c.type === 'text')
+    if (textContent?.text) {
+      try { return JSON.parse(textContent.text) } catch {}
+    }
+    return raw.result
+  }
+  return raw
 }
 
 // ========= TODO helpers =========
