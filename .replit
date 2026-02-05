@@ -1,0 +1,20 @@
+modules = ["nodejs-20"]
+
+[nix]
+channel = "stable-24_05"
+
+[env]
+GATEWAY_URL = "http://127.0.0.1:18789"
+GATEWAY_TOKEN = ""
+
+[[workflows.workflow]]
+name = "Mission Control"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+
+[deployment]
+run = ["sh", "-c", "npm run start"]
+build = ["sh", "-c", "npm run build"]
