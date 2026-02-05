@@ -255,6 +255,68 @@ app.get('/api/memory/search', async (req, res) => {
   }
 })
 
+// ========= Memory File Browser =========
+
+const WORKSPACE = process.env.WORKSPACE || '/root/clawd'
+const ALLOWED_EXTENSIONS = ['.md', '.txt', '.json']
+
+app.get('/api/memory/files', (_req, res) => {
+  try {
+    const memoryDir = path.join(WORKSPACE, 'memory')
+    const files: Array<{ name: string; path: string; size: number; modified: string }> = []
+
+    // Add top-level memory files
+    for (const name of ['MEMORY.md', 'AGENTS.md', 'SOUL.md', 'USER.md', 'IDENTITY.md', 'TOOLS.md', 'HEARTBEAT.md']) {
+      const fp = path.join(WORKSPACE, name)
+      if (fs.existsSync(fp)) {
+        const stat = fs.statSync(fp)
+        files.push({ name, path: name, size: stat.size, modified: stat.mtime.toISOString() })
+      }
+    }
+
+    // Add memory/ directory files
+    if (fs.existsSync(memoryDir)) {
+      const entries = fs.readdirSync(memoryDir).sort().reverse()
+      for (const entry of entries) {
+        const fp = path.join(memoryDir, entry)
+        const stat = fs.statSync(fp)
+        if (stat.isFile() && ALLOWED_EXTENSIONS.some(ext => entry.endsWith(ext))) {
+          files.push({ name: entry, path: `memory/${entry}`, size: stat.size, modified: stat.mtime.toISOString() })
+        }
+      }
+    }
+
+    res.json(files)
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/memory/file', (req, res) => {
+  try {
+    const filePath = req.query.path as string
+    if (!filePath) return res.status(400).json({ error: 'path required' })
+
+    // Security: prevent directory traversal
+    const resolved = path.resolve(WORKSPACE, filePath)
+    if (!resolved.startsWith(WORKSPACE)) {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+    if (!ALLOWED_EXTENSIONS.some(ext => resolved.endsWith(ext))) {
+      return res.status(403).json({ error: 'File type not allowed' })
+    }
+    if (!fs.existsSync(resolved)) {
+      return res.status(404).json({ error: 'File not found' })
+    }
+
+    const content = fs.readFileSync(resolved, 'utf8')
+    const stat = fs.statSync(resolved)
+    res.json({ path: filePath, content, size: stat.size, modified: stat.mtime.toISOString() })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ========= Gateway Config & Status =========
 
 app.get('/api/gateway/config', async (_req, res) => {

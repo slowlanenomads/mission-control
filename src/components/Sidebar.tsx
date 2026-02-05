@@ -1,5 +1,6 @@
-import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, MessageSquare, Clock, Brain, Settings, LogOut, CheckSquare } from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { LayoutDashboard, MessageSquare, Clock, Brain, Settings, LogOut, CheckSquare, X } from 'lucide-react'
+import { useEffect } from 'react'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -13,34 +14,59 @@ const nav = [
 interface SidebarProps {
   onLogout?: () => void
   username?: string
+  mobileOpen?: boolean
+  onClose?: () => void
 }
 
-export function Sidebar({ onLogout, username }: SidebarProps) {
+export function Sidebar({ onLogout, username, mobileOpen, onClose }: SidebarProps) {
+  const location = useLocation()
+
+  // Auto-close sidebar on route change (mobile)
+  useEffect(() => {
+    onClose?.()
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <aside className="fixed left-0 top-0 h-screen w-56 bg-gray-900 border-r border-gray-800 flex flex-col z-50">
-      {/* Logo */}
+    <aside
+      className={`
+        fixed left-0 top-0 h-screen w-56 bg-gray-900 border-r border-gray-800 flex flex-col z-50
+        transition-transform duration-200 ease-in-out
+        ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
+        lg:translate-x-0
+      `}
+    >
+      {/* Logo + Close (mobile) */}
       <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🦞</span>
-          <div>
-            <h1 className="font-bold text-sm text-gray-100">Mission Control</h1>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot" />
-              <span className="text-[10px] text-green-400 uppercase tracking-wider font-medium">Live</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🦞</span>
+            <div>
+              <h1 className="font-bold text-sm text-gray-100">Mission Control</h1>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-dot" />
+                <span className="text-[10px] text-green-400 uppercase tracking-wider font-medium">Live</span>
+              </div>
             </div>
           </div>
+          {/* Close button — mobile only */}
+          <button
+            onClick={onClose}
+            className="lg:hidden p-1 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+          >
+            <X size={18} />
+          </button>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 space-y-1">
+      <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         {nav.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+              `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                 isActive
                   ? 'bg-gray-800 text-white font-medium'
                   : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'

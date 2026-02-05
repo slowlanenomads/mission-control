@@ -98,7 +98,7 @@ function SessionRow({ session }: { session: Session }) {
 }
 
 export default function Sessions() {
-  const { data: sessions, loading, refetch } = useApi<any>('/api/sessions', { interval: 30000 })
+  const { data: sessions, loading, error, refetch } = useApi<any>('/api/sessions', { interval: 30000 })
   const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
 
   return (
@@ -106,7 +106,9 @@ export default function Sessions() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold">Sessions</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Browse and inspect active sessions</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {sessionList.length > 0 ? `${sessionList.length} session${sessionList.length !== 1 ? 's' : ''} active` : 'Browse and inspect active sessions'}
+          </p>
         </div>
         <button
           onClick={refetch}
@@ -116,12 +118,24 @@ export default function Sessions() {
           Refresh
         </button>
       </div>
-      {loading && sessionList.length === 0 ? (
+      {error && !sessions ? (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-8 text-center">
+          <p className="text-sm text-red-400 mb-1">Failed to load sessions</p>
+          <p className="text-xs text-gray-500 font-mono mb-4">{error}</p>
+          <button onClick={refetch} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-700 transition-colors">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : loading && sessionList.length === 0 ? (
         <div className="space-y-3">
           {[...Array(4)].map((_, i) => <SkeletonSessionRow key={i} />)}
         </div>
       ) : sessionList.length === 0 ? (
-        <div className="text-center py-20 text-gray-500">No sessions found</div>
+        <div className="text-center py-20">
+          <MessageSquare className="w-10 h-10 text-gray-700 mx-auto mb-3" />
+          <p className="text-gray-500">No active sessions</p>
+          <p className="text-xs text-gray-600 mt-1">Sessions appear here when the agent is running</p>
+        </div>
       ) : (
         <div className="space-y-3">
           {sessionList.map((session: Session) => (
