@@ -11,3 +11,5 @@ export function StatCard({ icon: Icon, label, value, subtitle, color = 'text-blu
     </div>
   )
 }
+
+export default StatCard

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-export function useFetch<T>(url: string, refreshInterval?: number) {
+export function useApi<T>(url: string, refreshInterval?: number) {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

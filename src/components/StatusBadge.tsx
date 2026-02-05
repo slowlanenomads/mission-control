@@ -2,3 +2,5 @@ const c: Record<string,string> = { active:'bg-green-400/10 text-green-400 border
 export function StatusBadge({ variant, label }: { variant: string; label?: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border ${c[variant]||c.disabled}`}>{label||variant}</span>
 }
+
+export default StatusBadge
