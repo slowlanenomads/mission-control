@@ -307,10 +307,59 @@ app.get('/api/cron', async (_req, res) => {
   }
 })
 
+// Cron job actions
+app.post('/api/cron/:id/run', async (req, res) => {
+  try {
+    const result = await invokeGateway('cron', { action: 'run', jobId: req.params.id })
+    res.json({ ok: true, result })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.patch('/api/cron/:id', async (req, res) => {
+  try {
+    const result = await invokeGateway('cron', { action: 'update', jobId: req.params.id, ...req.body })
+    res.json({ ok: true, result })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.delete('/api/cron/:id', async (req, res) => {
+  try {
+    const result = await invokeGateway('cron', { action: 'delete', jobId: req.params.id })
+    res.json({ ok: true, result })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/cron', async (req, res) => {
+  try {
+    const result = await invokeGateway('cron', { action: 'create', ...req.body })
+    res.json({ ok: true, result })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 app.get('/api/cron/:id/runs', async (req, res) => {
   try {
     const result = await invokeGateway('cron', { action: 'runs', jobId: req.params.id })
     res.json(result)
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Session: send message
+app.post('/api/sessions/:key/send', async (req, res) => {
+  try {
+    const { message } = req.body
+    if (!message) return res.status(400).json({ error: 'message required' })
+    const result = await invokeGateway('sessions_send', { sessionKey: req.params.key, message })
+    res.json({ ok: true, result })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -401,6 +450,50 @@ app.get('/api/memory/file', (req, res) => {
     const content = fs.readFileSync(resolved, 'utf8')
     const stat = fs.statSync(resolved)
     res.json({ path: filePath, content, size: stat.size, modified: stat.mtime.toISOString() })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Memory file save
+app.put('/api/memory/file', (req, res) => {
+  try {
+    const { path: filePath, content } = req.body
+    if (!filePath || typeof content !== 'string') return res.status(400).json({ error: 'path and content required' })
+
+    const resolved = path.resolve(WORKSPACE, filePath)
+    if (!resolved.startsWith(WORKSPACE)) {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+    if (!ALLOWED_EXTENSIONS.some(ext => resolved.endsWith(ext))) {
+      return res.status(403).json({ error: 'File type not allowed' })
+    }
+
+    // Ensure directory exists
+    const dir = path.dirname(resolved)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+    fs.writeFileSync(resolved, content, 'utf8')
+    res.json({ ok: true })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Dashboard actions
+app.post('/api/actions/sync', async (_req, res) => {
+  try {
+    const result = await invokeGateway('empire_sync', {})
+    res.json({ ok: true, result })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/actions/restart-gateway', async (_req, res) => {
+  try {
+    const result = await invokeGateway('gateway', { action: 'restart' })
+    res.json({ ok: true, result })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }

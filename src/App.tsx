@@ -10,6 +10,7 @@ import Memory from './pages/Memory'
 import SettingsPage from './pages/SettingsPage'
 import Todos from './pages/Todos'
 import Login from './pages/Login'
+import { ToastProvider } from './components/Toast'
 
 function AppShell() {
   const { user, loading, needsSetup, logout } = useAuth()
@@ -92,7 +93,9 @@ function AppShell() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppShell />
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
     </AuthProvider>
   )
 }

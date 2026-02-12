@@ -1,9 +1,12 @@
-import React from 'react'
-import { Activity, MessageSquare, Clock, Users, Zap, Cpu, DollarSign, TrendingUp } from 'lucide-react'
+import React, { useState } from 'react'
+import { Activity, MessageSquare, Clock, Users, Zap, Cpu, DollarSign, TrendingUp, RefreshCw, RotateCw, FileText } from 'lucide-react'
 import StatCard from '../components/StatCard'
 import StatusBadge from '../components/StatusBadge'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { SkeletonStatCard, SkeletonActivityFeed } from '../components/Skeleton'
 import { useApi } from '../hooks/useApi'
+import { useAction } from '../hooks/useAction'
+import { useToast } from '../components/Toast'
 import { formatDistanceToNow } from 'date-fns'
 
 interface Session {
@@ -53,6 +56,10 @@ export default function Dashboard() {
   const { data: sessions, loading: sessionsLoading } = useApi<Session[]>('/api/sessions', { interval: 15000 })
   const { data: sessionStatus, loading: statusLoading } = useApi<SessionStatus>('/api/session-status', { interval: 30000 })
   const { data: cronData, loading: cronLoading } = useApi<any>('/api/cron', { interval: 60000 })
+  const { toast } = useToast()
+  const syncAction = useAction()
+  const restartAction = useAction()
+  const [restartConfirm, setRestartConfirm] = useState(false)
 
   const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
   const activeSessions = sessionList.filter(s => s.status === 'active').length
@@ -62,25 +69,26 @@ export default function Dashboard() {
   const subagentCount = sessionList.filter(s => s.kind === 'subagent').length
 
   const totalTokens = (sessionStatus?.inputTokens || 0) + (sessionStatus?.outputTokens || 0)
-  const costPer1k = totalTokens > 0 && sessionStatus?.cost != null
-    ? ((sessionStatus.cost / totalTokens) * 1000)
-    : null
+  const costPer1k = totalTokens > 0 && sessionStatus?.cost != null ? ((sessionStatus.cost / totalTokens) * 1000) : null
 
   const activityFeed = sessionList
     .filter(s => s.recentMessages && s.recentMessages.length > 0)
-    .flatMap(s =>
-      (s.recentMessages || []).map(msg => ({
-        sessionKey: s.sessionKey,
-        kind: s.kind,
-        role: msg.role,
-        content: msg.content,
-        timestamp: msg.timestamp,
-      }))
-    )
+    .flatMap(s => (s.recentMessages || []).map(msg => ({ sessionKey: s.sessionKey, kind: s.kind, role: msg.role, content: msg.content, timestamp: msg.timestamp })))
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 15)
 
   const isInitialLoad = sessionsLoading && sessionList.length === 0
+
+  const handleSync = async () => {
+    const res = await syncAction.execute('/api/actions/sync', { method: 'POST' })
+    toast(res.ok ? 'Sync triggered' : `Sync failed: ${res.error}`, res.ok ? 'success' : 'error')
+  }
+
+  const handleRestart = async () => {
+    const res = await restartAction.execute('/api/actions/restart-gateway', { method: 'POST' })
+    toast(res.ok ? 'Gateway restart initiated' : `Restart failed: ${res.error}`, res.ok ? 'success' : 'error')
+    setRestartConfirm(false)
+  }
 
   return (
     <div className="space-y-6">
@@ -116,6 +124,27 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Quick Actions */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Zap className="w-4 h-4 text-yellow-400" />
+          <h3 className="font-semibold text-sm">Quick Actions</h3>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button onClick={handleSync} disabled={syncAction.loading}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50 transition-colors">
+            <RefreshCw className={`w-4 h-4 ${syncAction.loading ? 'animate-spin' : ''}`} /> Run Sync
+          </button>
+          <button onClick={() => setRestartConfirm(true)} disabled={restartAction.loading}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-red-800 rounded-lg text-sm text-red-300 hover:bg-red-900/30 disabled:opacity-50 transition-colors">
+            <RotateCw className={`w-4 h-4 ${restartAction.loading ? 'animate-spin' : ''}`} /> Restart Gateway
+          </button>
+          <a href="/memory" className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 hover:bg-gray-700 transition-colors">
+            <FileText className="w-4 h-4" /> View Logs
+          </a>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Activity feed */}
         <div className="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl">
@@ -124,18 +153,14 @@ export default function Dashboard() {
               <Zap className="w-4 h-4 text-yellow-400" />
               <h3 className="font-semibold text-sm">Recent Activity</h3>
             </div>
-            {sessionsLoading && (
-              <span className="text-[10px] text-gray-500 font-mono animate-pulse">refreshing...</span>
-            )}
+            {sessionsLoading && <span className="text-[10px] text-gray-500 font-mono animate-pulse">refreshing...</span>}
           </div>
           {isInitialLoad ? (
             <SkeletonActivityFeed />
           ) : (
             <div className="divide-y divide-gray-800/50 max-h-[420px] overflow-y-auto">
               {activityFeed.length === 0 ? (
-                <div className="px-6 py-12 text-center text-gray-500 text-sm">
-                  No recent activity
-                </div>
+                <div className="px-6 py-12 text-center text-gray-500 text-sm">No recent activity</div>
               ) : (
                 activityFeed.map((item, i) => (
                   <div key={`${item.sessionKey}-${i}`} className={`px-6 py-3 border-l-2 ${kindAccent(item.kind)} hover:bg-gray-800/30 transition-colors`}>
@@ -159,7 +184,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Session Status + Cost */}
+        {/* Usage & Cost */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl">
           <div className="px-6 py-4 border-b border-gray-800 flex items-center gap-2">
             <Cpu className="w-4 h-4 text-cyan-400" />
@@ -169,21 +194,15 @@ export default function Dashboard() {
             {statusLoading && !sessionStatus ? (
               <div className="space-y-4">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i}>
-                    <div className="h-3 w-20 bg-gray-800 rounded animate-pulse mb-2" />
-                    <div className="h-6 w-24 bg-gray-800 rounded animate-pulse" />
-                  </div>
+                  <div key={i}><div className="h-3 w-20 bg-gray-800 rounded animate-pulse mb-2" /><div className="h-6 w-24 bg-gray-800 rounded animate-pulse" /></div>
                 ))}
               </div>
             ) : sessionStatus ? (
               <>
-                {/* Model */}
                 <div>
                   <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Model</p>
                   <p className="font-mono text-sm text-gray-200">{sessionStatus.model || '\u2014'}</p>
                 </div>
-
-                {/* Token bars */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs text-gray-500 uppercase tracking-wider">Input Tokens</p>
@@ -196,7 +215,6 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
-
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs text-gray-500 uppercase tracking-wider">Output Tokens</p>
@@ -209,8 +227,6 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
-
-                {/* Cost section */}
                 {sessionStatus.cost != null && (
                   <div className="border-t border-gray-800 pt-4 space-y-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -240,8 +256,6 @@ export default function Dashboard() {
                     )}
                   </div>
                 )}
-
-                {/* Total tokens summary */}
                 <div className="border-t border-gray-800 pt-4">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-gray-500">Total Tokens</span>
@@ -255,6 +269,16 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={restartConfirm}
+        title="Restart Gateway"
+        message="This will restart the OpenClaw gateway. Active sessions may be interrupted. Continue?"
+        confirmLabel="Restart"
+        onConfirm={handleRestart}
+        onCancel={() => setRestartConfirm(false)}
+        loading={restartAction.loading}
+      />
     </div>
   )
 }

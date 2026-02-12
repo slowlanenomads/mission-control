@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
-import { MessageSquare, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
+import { MessageSquare, ChevronDown, ChevronRight, RefreshCw, Send } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
 import { SkeletonSessionRow } from '../components/Skeleton'
 import { useApi } from '../hooks/useApi'
+import { useAction } from '../hooks/useAction'
+import { useToast } from '../components/Toast'
 import { formatDistanceToNow } from 'date-fns'
 
 interface Session {
@@ -35,11 +37,29 @@ function statusColor(status: string): string {
 
 function SessionRow({ session }: { session: Session }) {
   const [expanded, setExpanded] = useState(false)
+  const [msgText, setMsgText] = useState('')
+  const { toast } = useToast()
+  const sendAction = useAction()
   const { data: history, loading: historyLoading } = useApi<any>(
     expanded ? `/api/sessions/${encodeURIComponent(session.sessionKey)}/history` : null
   )
 
   const messages: HistoryMessage[] = Array.isArray(history) ? history : (history as any)?.messages ?? []
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!msgText.trim()) return
+    const res = await sendAction.execute(`/api/sessions/${encodeURIComponent(session.sessionKey)}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ message: msgText.trim() }),
+    })
+    if (res.ok) {
+      toast(`Message sent to ${session.sessionKey.slice(0, 25)}...`)
+      setMsgText('')
+    } else {
+      toast(`Failed: ${res.error}`, 'error')
+    }
+  }
 
   return (
     <div className="border border-gray-800 rounded-lg overflow-hidden bg-gray-900 hover:border-gray-700 transition-colors">
@@ -68,13 +88,31 @@ function SessionRow({ session }: { session: Session }) {
       </button>
       {expanded && (
         <div className="border-t border-gray-800 bg-gray-950/50">
+          {/* Send message */}
+          <form onSubmit={handleSend} className="px-5 py-3 border-b border-gray-800/50 flex gap-2">
+            <input
+              type="text"
+              value={msgText}
+              onChange={e => setMsgText(e.target.value)}
+              placeholder="Send a message to this session..."
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-gray-500"
+            />
+            <button
+              type="submit"
+              disabled={sendAction.loading || !msgText.trim()}
+              className="px-3 py-2 bg-blue-600 border border-blue-500 rounded-lg text-white hover:bg-blue-500 disabled:opacity-50 transition-colors"
+            >
+              <Send className={`w-4 h-4 ${sendAction.loading ? 'animate-pulse' : ''}`} />
+            </button>
+          </form>
+
           {historyLoading ? (
             <div className="px-5 py-8 text-center text-sm text-gray-500 animate-pulse">Loading messages...</div>
           ) : messages.length === 0 ? (
             <div className="px-5 py-8 text-center text-sm text-gray-500">No messages found</div>
           ) : (
             <div className="divide-y divide-gray-800/50 max-h-[400px] overflow-y-auto">
-              {messages.slice(0, 30).map((msg: HistoryMessage, i: number) => (
+              {messages.slice(0, 30).map((msg, i) => (
                 <div key={i} className="px-5 py-3">
                   <div className="flex items-center gap-2 mb-1">
                     <span className={`text-xs font-mono font-medium ${msg.role === 'user' ? 'text-blue-400' : msg.role === 'assistant' ? 'text-green-400' : 'text-gray-500'}`}>
@@ -138,7 +176,7 @@ export default function Sessions() {
         </div>
       ) : (
         <div className="space-y-3">
-          {sessionList.map((session: Session) => (
+          {sessionList.map(session => (
             <SessionRow key={session.sessionKey} session={session} />
           ))}
         </div>
