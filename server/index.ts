@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express'
 import cors from 'cors'
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 import {
   createToken, verifyToken, hasUsers, createUser, authenticate,
   checkRateLimit, recordFailedAttempt, clearAttempts,
@@ -232,12 +233,14 @@ function aggregateUsage(sessions: any[]): any {
 
 // ========= API Routes =========
 
-app.get('/api/sessions', async (_req, res) => {
+app.get('/api/sessions', async (req, res) => {
   try {
-    const result = await invokeGateway('sessions_list', { 
-      activeMinutes: 1440, // last 24h
-      messageLimit: 3 
-    })
+    const args: Record<string, any> = { 
+      activeMinutes: parseInt(req.query.activeMinutes as string) || 1440,
+      messageLimit: parseInt(req.query.messageLimit as string) || 3,
+    }
+    if (req.query.kinds) args.kinds = req.query.kinds
+    const result = await invokeGateway('sessions_list', args)
     // Normalize session data for frontend
     const raw = result?.sessions || (Array.isArray(result) ? result : [])
     const sessions = raw.map(normalizeSession)
@@ -251,8 +254,8 @@ app.get('/api/sessions/:key/history', async (req, res) => {
   try {
     const result = await invokeGateway('sessions_history', { 
       sessionKey: req.params.key,
-      limit: 50,
-      includeTools: false
+      limit: parseInt(req.query.limit as string) || 50,
+      includeTools: req.query.includeTools === 'true',
     })
     // Normalize messages
     const messages = (result?.messages || (Array.isArray(result) ? result : []))
@@ -611,6 +614,164 @@ app.delete('/api/todos/:id', (req, res) => {
     res.json({ ok: true })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
+  }
+})
+
+// ========= Sub-agent Run History (scans transcript files) =========
+
+const SESSIONS_DIR = '/root/.openclaw/agents/main/sessions/'
+
+function parseTranscriptRun(filePath: string): any | null {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const lines = content.trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
+    if (!lines.length) return null
+
+    const session = lines[0]
+    if (session?.type !== 'session') return null
+
+    const sid = session.id || ''
+    const startedAt = session.timestamp || ''
+    let model = ''
+    let task = ''
+    let findings = ''
+    let completedAt = ''
+    let totalIn = 0
+    let totalOut = 0
+    let totalCost = 0
+
+    for (const l of lines) {
+      if (l.type === 'model_change' && l.modelId) model = l.modelId
+      if (l.type === 'message') {
+        const msg = l.message || {}
+        const usage = l.usage || msg.usage || {}
+        // First user message = task
+        if (msg.role === 'user' && !task) {
+          const c = msg.content
+          if (Array.isArray(c)) {
+            const txt = c.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n')
+            task = txt
+          } else if (typeof c === 'string') {
+            task = c
+          }
+        }
+        // Last assistant text = findings
+        if (msg.role === 'assistant') {
+          const c = msg.content
+          if (Array.isArray(c)) {
+            const txt = c.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n')
+            if (txt) findings = txt
+          } else if (typeof c === 'string' && c) {
+            findings = c
+          }
+          if (l.timestamp) completedAt = l.timestamp
+          if (usage.input) totalIn += (usage.input || 0) + (usage.cacheRead || 0)
+          if (usage.output) totalOut += usage.output || 0
+          if (usage.cost?.total) totalCost += usage.cost.total
+        }
+      }
+    }
+
+    if (!task) return null
+
+    // Strip timestamp prefix from task (e.g. "[Fri 2026-02-20 04:31 UTC] ")
+    task = task.replace(/^\[.*?\]\s*/, '')
+
+    let durationMs = 0
+    if (startedAt && completedAt) {
+      try {
+        durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime()
+      } catch {}
+    }
+
+    return {
+      id: sid,
+      task: task.slice(0, 300),
+      status: 'completed',
+      model: model || 'unknown',
+      startedAt,
+      completedAt: completedAt || startedAt,
+      durationMs: Math.max(durationMs, 0),
+      findings: findings.slice(0, 1000),
+      tokensIn: totalIn,
+      tokensOut: totalOut,
+      cost: Math.round(totalCost * 10000) / 10000,
+      sessionId: sid,
+    }
+  } catch {
+    return null
+  }
+}
+
+// Keep POST for manual logging (backwards compat)
+const SUBAGENT_HISTORY_FILE = '/root/.openclaw/subagent-history.jsonl'
+app.post('/api/subagent-runs', (req, res) => {
+  const run = req.body
+  run.id = run.id || crypto.randomUUID()
+  run.loggedAt = new Date().toISOString()
+  fs.appendFileSync(SUBAGENT_HISTORY_FILE, JSON.stringify(run) + '\n')
+  res.json({ ok: true, id: run.id })
+})
+
+app.get('/api/subagent-runs', (req, res) => {
+  const limit = parseInt(req.query.limit as string) || 100
+  const status = req.query.status as string
+
+  try {
+    if (!fs.existsSync(SESSIONS_DIR)) return res.json({ runs: [] })
+
+    // Get main session ID to exclude it
+    const mainSessionFile = fs.readdirSync(SESSIONS_DIR)
+      .filter(f => f.endsWith('.jsonl') && !f.includes('.deleted') && !f.includes('.lock'))
+      .sort((a, b) => {
+        const sa = fs.statSync(path.join(SESSIONS_DIR, a)).size
+        const sb = fs.statSync(path.join(SESSIONS_DIR, b)).size
+        return sb - sa // Largest file = main session
+      })[0]
+    const mainSessionId = mainSessionFile?.replace('.jsonl', '') || ''
+
+    // Scan all transcript files (including deleted = historical)
+    const files = fs.readdirSync(SESSIONS_DIR)
+      .filter(f => (f.endsWith('.jsonl') || f.includes('.jsonl.deleted')) && !f.includes('.lock'))
+
+    let runs: any[] = []
+    for (const file of files) {
+      const sid = file.split('.')[0]
+      // Skip main session (it's huge and not a sub-agent)
+      if (sid === mainSessionId) continue
+      // Skip very small files (likely empty or just session headers)
+      const filePath = path.join(SESSIONS_DIR, file)
+      const stat = fs.statSync(filePath)
+      if (stat.size < 500) continue
+
+      const run = parseTranscriptRun(filePath)
+      if (run) {
+        // Detect if it's a cron job
+        const isCron = /^\[cron:|^Read HEARTBEAT|^checkpoint|^Mid-?day|^Mid$/i.test(run.task.trim())
+        run.type = isCron ? 'cron' : 'subagent'
+        // Clean up cron task labels
+        if (isCron) {
+          const cronMatch = run.task.match(/^\[cron:\S+\s+([^\]]+)\]/)
+          if (cronMatch) run.task = cronMatch[1]
+        }
+        runs.push(run)
+      }
+    }
+
+    // Sort by completedAt descending
+    runs.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime())
+
+    // Filter
+    if (status && status !== 'all') runs = runs.filter(r => r.status === status)
+
+    // Type filter from query
+    const typeFilter = req.query.type as string
+    if (typeFilter && typeFilter !== 'all') runs = runs.filter(r => r.type === typeFilter)
+
+    runs = runs.slice(0, limit)
+    res.json({ runs })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, runs: [] })
   }
 })
 

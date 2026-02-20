@@ -9,6 +9,8 @@ import CronJobs from './pages/CronJobs'
 import Memory from './pages/Memory'
 import SettingsPage from './pages/SettingsPage'
 import Todos from './pages/Todos'
+import SubAgents from './pages/SubAgents'
+import Files from './pages/Files'
 import Login from './pages/Login'
 import { ToastProvider } from './components/Toast'
 
@@ -79,9 +81,11 @@ function AppShell() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/sessions" element={<Sessions />} />
+            <Route path="/subagents" element={<SubAgents />} />
             <Route path="/cron" element={<CronJobs />} />
             <Route path="/todos" element={<Todos />} />
             <Route path="/memory" element={<Memory />} />
+            <Route path="/files" element={<Files />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

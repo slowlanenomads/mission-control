@@ -1,13 +1,15 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { LayoutDashboard, MessageSquare, Clock, Brain, Settings, LogOut, CheckSquare, X } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, Clock, Brain, Settings, LogOut, CheckSquare, Bot, FolderOpen, X } from 'lucide-react'
 import { useEffect } from 'react'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/sessions', icon: MessageSquare, label: 'Sessions' },
+  { to: '/subagents', icon: Bot, label: 'Sub-Agents' },
   { to: '/cron', icon: Clock, label: 'Cron Jobs' },
   { to: '/todos', icon: CheckSquare, label: 'Tasks' },
   { to: '/memory', icon: Brain, label: 'Memory' },
+  { to: '/files', icon: FolderOpen, label: 'Files' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
