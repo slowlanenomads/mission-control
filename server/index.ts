@@ -775,6 +775,194 @@ app.get('/api/subagent-runs', (req, res) => {
   }
 })
 
+// ========= Transcript Deep Dive =========
+
+app.get('/api/transcript/:sessionId', (req, res) => {
+  const sid = req.params.sessionId
+  // Sanitize session ID to prevent path traversal
+  if (!/^[a-f0-9-]+$/i.test(sid)) return res.status(400).json({ error: 'Invalid session ID' })
+
+  try {
+    // Find the transcript file (active or deleted)
+    const files = fs.readdirSync(SESSIONS_DIR).filter(f => f.startsWith(sid) && !f.includes('.lock'))
+    if (!files.length) return res.status(404).json({ error: 'Transcript not found' })
+
+    const filePath = path.join(SESSIONS_DIR, files[0])
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const rawLines = content.trim().split('\n').filter(Boolean)
+
+    let sessionMeta: any = {}
+    let model = ''
+    let thinkingLevel = ''
+    const messages: any[] = []
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+    let totalCacheRead = 0
+    let totalCacheWrite = 0
+    let totalCost = 0
+    let toolCallCount = 0
+    const toolBreakdown: Record<string, { count: number; totalTokensOut: number }> = {}
+
+    for (const line of rawLines) {
+      let parsed: any
+      try { parsed = JSON.parse(line) } catch { continue }
+
+      if (parsed.type === 'session') {
+        sessionMeta = {
+          id: parsed.id,
+          startedAt: parsed.timestamp,
+          cwd: parsed.cwd,
+          version: parsed.version,
+        }
+        continue
+      }
+
+      if (parsed.type === 'model_change') {
+        model = parsed.modelId || model
+        continue
+      }
+
+      if (parsed.type === 'thinking_level_change') {
+        thinkingLevel = parsed.thinkingLevel || thinkingLevel
+        continue
+      }
+
+      if (parsed.type === 'message') {
+        const msg = parsed.message || {}
+        const usage = parsed.usage || msg.usage || {}
+        const role = msg.role || 'unknown'
+
+        const entry: any = {
+          role,
+          timestamp: parsed.timestamp || '',
+          id: parsed.id || '',
+        }
+
+        // Extract content
+        if (Array.isArray(msg.content)) {
+          entry.content = []
+          for (const part of msg.content) {
+            if (part.type === 'text') {
+              entry.content.push({ type: 'text', text: part.text || '' })
+            } else if (part.type === 'toolCall') {
+              toolCallCount++
+              const toolName = part.name || 'unknown'
+              if (!toolBreakdown[toolName]) toolBreakdown[toolName] = { count: 0, totalTokensOut: 0 }
+              toolBreakdown[toolName].count++
+              entry.content.push({
+                type: 'toolCall',
+                id: part.id || '',
+                name: toolName,
+                arguments: typeof part.arguments === 'string' 
+                  ? part.arguments.slice(0, 2000) 
+                  : JSON.stringify(part.arguments || {}).slice(0, 2000),
+              })
+            } else if (part.type === 'toolResult') {
+              entry.content.push({
+                type: 'toolResult',
+                toolCallId: part.toolCallId || '',
+                text: (typeof part.content === 'string' ? part.content : JSON.stringify(part.content || '')).slice(0, 3000),
+              })
+            } else if (part.type === 'thinking') {
+              entry.content.push({ type: 'thinking', text: (part.text || '').slice(0, 2000) })
+            }
+          }
+        } else if (typeof msg.content === 'string') {
+          entry.content = [{ type: 'text', text: msg.content }]
+        }
+
+        // Extract usage
+        if (usage && (usage.input || usage.output)) {
+          const input = usage.input || 0
+          const output = usage.output || 0
+          const cacheRead = usage.cacheRead || 0
+          const cacheWrite = usage.cacheWrite || 0
+          const cost = usage.cost?.total || 0
+
+          entry.usage = {
+            input,
+            output,
+            cacheRead,
+            cacheWrite,
+            totalTokens: usage.totalTokens || (input + output + cacheRead + cacheWrite),
+            cost: Math.round(cost * 10000) / 10000,
+            cacheHitRate: (input + cacheRead) > 0 
+              ? Math.round((cacheRead / (input + cacheRead)) * 100) 
+              : 0,
+          }
+
+          totalInputTokens += input
+          totalOutputTokens += output
+          totalCacheRead += cacheRead
+          totalCacheWrite += cacheWrite
+          totalCost += cost
+
+          // Track tokens per tool
+          if (role === 'assistant' && entry.content) {
+            for (const part of entry.content) {
+              if (part.type === 'toolCall' && toolBreakdown[part.name]) {
+                toolBreakdown[part.name].totalTokensOut += output
+              }
+            }
+          }
+        }
+
+        // Add running totals
+        entry.cumulative = {
+          tokens: totalInputTokens + totalOutputTokens + totalCacheRead + totalCacheWrite,
+          cost: Math.round(totalCost * 10000) / 10000,
+        }
+
+        messages.push(entry)
+        continue
+      }
+    }
+
+    // Calculate session duration
+    const firstTs = sessionMeta.startedAt
+    const lastTs = messages.length ? messages[messages.length - 1].timestamp : firstTs
+    let durationMs = 0
+    if (firstTs && lastTs) {
+      try { durationMs = new Date(lastTs).getTime() - new Date(firstTs).getTime() } catch {}
+    }
+
+    // Overall cache hit rate
+    const totalInput = totalInputTokens + totalCacheRead
+    const overallCacheHitRate = totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : 0
+
+    res.json({
+      session: {
+        ...sessionMeta,
+        model,
+        thinkingLevel,
+        completedAt: lastTs,
+        durationMs,
+        deleted: files[0].includes('.deleted'),
+      },
+      stats: {
+        messageCount: messages.length,
+        userMessages: messages.filter(m => m.role === 'user').length,
+        assistantMessages: messages.filter(m => m.role === 'assistant').length,
+        toolResultMessages: messages.filter(m => m.role === 'toolResult').length,
+        toolCallCount,
+        totalInputTokens,
+        totalOutputTokens,
+        totalCacheRead,
+        totalCacheWrite,
+        totalTokens: totalInputTokens + totalOutputTokens + totalCacheRead + totalCacheWrite,
+        totalCost: Math.round(totalCost * 10000) / 10000,
+        overallCacheHitRate,
+        toolBreakdown: Object.entries(toolBreakdown)
+          .map(([name, data]) => ({ name, ...data }))
+          .sort((a, b) => b.count - a.count),
+      },
+      messages,
+    })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ========= Serve static files in production =========
 
 if (process.env.NODE_ENV === 'production') {

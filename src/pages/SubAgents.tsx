@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Bot, ChevronDown, ChevronRight, Clock, Cpu, Hash, Zap, CheckCircle, TrendingUp } from 'lucide-react'
 
 interface SubAgentRun {
@@ -51,6 +52,7 @@ type StatusFilter = 'all' | 'completed' | 'failed'
 type TypeFilter = 'all' | 'subagent' | 'cron'
 
 export default function SubAgents() {
+  const navigate = useNavigate()
   const [runs, setRuns] = useState<SubAgentRun[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
@@ -187,11 +189,19 @@ export default function SubAgents() {
                         <div className="text-sm text-gray-400 bg-gray-800/50 rounded-lg p-3">{r.findings}</div>
                       </div>
                     )}
-                    {r.startedAt && (
-                      <div className="text-xs text-gray-600">
-                        Started: {new Date(r.startedAt).toLocaleString()} → Completed: {r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}
-                      </div>
-                    )}
+                    <div className="flex items-center justify-between">
+                      {r.startedAt && (
+                        <div className="text-xs text-gray-600">
+                          Started: {new Date(r.startedAt).toLocaleString()} → Completed: {r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}
+                        </div>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/session/${r.id}`) }}
+                        className="text-xs bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 px-3 py-1.5 rounded transition-colors"
+                      >
+                        🔬 Deep Dive
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
