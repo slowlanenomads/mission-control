@@ -8,7 +8,7 @@ export function useAction() {
     try {
       const res = await fetch(url, {
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...options.headers as any },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...options.headers as any },
         ...options,
       })
       if (res.status === 401) {

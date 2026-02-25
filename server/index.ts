@@ -12,13 +12,17 @@ const app = express()
 const PORT = process.env.PORT || 3333
 
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:18789'
-const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '4e5fe116c0397c5bce9654143fcd6dfcf58d70204ee5c698'
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN
+if (!GATEWAY_TOKEN) {
+  console.error('FATAL: GATEWAY_TOKEN environment variable is required')
+  process.exit(1)
+}
 
 const DATA_DIR = path.join(__dirname, '../data')
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json')
 
 app.use(cors({ origin: true, credentials: true }))
-app.use(express.json())
+app.use(express.json({ limit: '1mb' }))
 
 // Trust proxy for correct IP behind Caddy
 app.set('trust proxy', 1)
@@ -40,12 +44,15 @@ function parseCookies(req: Request): Record<string, string> {
   return cookies
 }
 
+const isProduction = process.env.NODE_ENV === 'production'
+const secureSuffix = isProduction ? '; Secure' : ''
+
 function setTokenCookie(res: Response, token: string) {
-  res.setHeader('Set-Cookie', `mc_token=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${7 * 86400}; Secure`)
+  res.setHeader('Set-Cookie', `mc_token=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${7 * 86400}${secureSuffix}`)
 }
 
 function clearTokenCookie(res: Response) {
-  res.setHeader('Set-Cookie', 'mc_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Secure')
+  res.setHeader('Set-Cookie', `mc_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secureSuffix}`)
 }
 
 // ---------- Auth middleware ----------
@@ -109,6 +116,20 @@ app.post('/api/auth/logout', (_req, res) => {
   res.json({ ok: true })
 })
 
+// ---------- CSRF protection for mutations ----------
+
+function csrfCheck(req: Request, res: Response, next: NextFunction) {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next()
+  // Skip auth endpoints (login/setup/logout)
+  if (req.path.startsWith('/api/auth/')) return next()
+  if (req.headers['x-requested-with'] !== 'XMLHttpRequest') {
+    return res.status(403).json({ error: 'Missing X-Requested-With header' })
+  }
+  next()
+}
+
+app.use('/api', csrfCheck)
+
 // ---------- Protect all /api routes below ----------
 
 app.use('/api', (req, res, next) => {
@@ -119,14 +140,25 @@ app.use('/api', (req, res, next) => {
 
 // Proxy to gateway tools/invoke
 async function invokeGateway(tool: string, args: Record<string, any> = {}) {
-  const res = await fetch(`${GATEWAY_URL}/tools/invoke`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ tool, args }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30000)
+  let res: globalThis.Response
+  try {
+    res = await fetch(`${GATEWAY_URL}/tools/invoke`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tool, args }),
+      signal: controller.signal,
+    })
+  } catch (e: any) {
+    clearTimeout(timeout)
+    if (e.name === 'AbortError') throw new Error('Gateway request timed out (30s)')
+    throw e
+  }
+  clearTimeout(timeout)
   const raw = await res.json()
 
   // Unwrap gateway envelope: {ok, result: {content: [{text: "..."}], details: {...}}}
@@ -201,7 +233,7 @@ function normalizeSession(s: any): any {
     kind: inferSessionKind(s),
     status: 'active',
     lastActivity: s.updatedAt ? new Date(s.updatedAt).toISOString() : undefined,
-    messageCount: s.totalTokens ? Math.ceil(s.totalTokens / 500) : 0, // rough estimate
+    messageCount: s.messageCount ?? (s.messages?.length || 0),
     model: s.model,
     label: s.label,
     totalTokens: s.totalTokens,

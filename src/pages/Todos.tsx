@@ -56,7 +56,7 @@ export default function Todos() {
     try {
       await fetch('/api/todos', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         credentials: 'include',
         body: JSON.stringify({
           text: text.trim(),
@@ -80,7 +80,7 @@ export default function Todos() {
     try {
       await fetch(`/api/todos/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         credentials: 'include',
         body: JSON.stringify({ completed: !completed }),
       })
@@ -92,7 +92,7 @@ export default function Todos() {
 
   const deleteTodo = useCallback(async (id: string) => {
     try {
-      await fetch(`/api/todos/${id}`, { method: 'DELETE', credentials: 'include' })
+      await fetch(`/api/todos/${id}`, { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       refetch()
     } catch (e) {
       console.error('Failed to delete todo:', e)

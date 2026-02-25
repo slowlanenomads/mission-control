@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { MessageSquare, ChevronDown, ChevronRight, RefreshCw, Send } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
 import { SkeletonSessionRow } from '../components/Skeleton'
+import { ErrorState } from '../components/ErrorState'
 import { useApi } from '../hooks/useApi'
 import { useAction } from '../hooks/useAction'
 import { useToast } from '../components/Toast'
@@ -157,13 +158,7 @@ export default function Sessions() {
         </button>
       </div>
       {error && !sessions ? (
-        <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-8 text-center">
-          <p className="text-sm text-red-400 mb-1">Failed to load sessions</p>
-          <p className="text-xs text-gray-500 font-mono mb-4">{error}</p>
-          <button onClick={refetch} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-700 transition-colors">
-            <RefreshCw size={14} /> Retry
-          </button>
-        </div>
+        <ErrorState error={error} onRetry={refetch} />
       ) : loading && sessionList.length === 0 ? (
         <div className="space-y-3">
           {[...Array(4)].map((_, i) => <SkeletonSessionRow key={i} />)}

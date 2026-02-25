@@ -127,9 +127,8 @@ export default function SessionDetail() {
   const [showThinking, setShowThinking] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('mc_token')
     fetch(`/api/transcript/${sessionId}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
       .then(r => r.json())
       .then(d => {

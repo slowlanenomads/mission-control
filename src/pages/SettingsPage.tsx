@@ -22,6 +22,11 @@ interface GatewayStatus {
   ok?: boolean
   status?: string
   error?: string
+  version?: string
+  os?: string
+  nodeVersion?: string
+  port?: number
+  uptime?: number
 }
 
 interface ConfigItem {
@@ -88,8 +93,8 @@ export default function SettingsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ConfigSection title="Gateway" icon={Server} loading={isLoading && !config} items={[
           { label: 'Version', value: version, mono: true },
-          { label: 'Port', value: '18789', mono: true },
-          { label: 'API Endpoint', value: 'http://127.0.0.1:18789', mono: true },
+          { label: 'Port', value: status?.port ? String(status.port) : '18789', mono: true },
+          { label: 'API Endpoint', value: `http://127.0.0.1:${status?.port || 18789}`, mono: true },
           { label: 'Status', value: isConnected ? 'Running' : 'Unknown' },
         ]} />
         <ConfigSection title="Model" icon={Cpu} loading={isLoading && !config} items={[
@@ -116,9 +121,9 @@ export default function SettingsPage() {
           { label: 'Auto-refresh', value: '15-30s intervals' },
         ]} />
         <ConfigSection title="Environment" icon={Settings} items={[
-          { label: 'OS', value: 'Linux 6.8.0 (x64)', mono: true },
-          { label: 'Node.js', value: 'v22.22.0', mono: true },
-          { label: 'Workspace', value: '/root/clawd', mono: true },
+          { label: 'OS', value: status?.os || config?.os || 'Linux 6.8.0 (x64)', mono: true },
+          { label: 'Node.js', value: status?.nodeVersion || config?.nodeVersion || 'v22.22.0', mono: true },
+          { label: 'Workspace', value: config?.workspace || '/root/clawd', mono: true },
           { label: 'Timezone', value: 'UTC (display: EST)' },
         ]} />
       </div>

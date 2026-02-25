@@ -62,7 +62,7 @@ export default function SubAgents() {
 
   const fetchRuns = useCallback(async () => {
     try {
-      const res = await fetch('/api/subagent-runs?limit=200')
+      const res = await fetch('/api/subagent-runs?limit=200', { credentials: 'include' })
       const data = await res.json()
       setRuns(data.runs || [])
     } catch {} finally { setLoading(false) }

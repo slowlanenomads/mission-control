@@ -19,7 +19,6 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
-  let counter = 0
 
   const addToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now() + Math.random()
