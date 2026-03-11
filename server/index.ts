@@ -20,9 +20,17 @@ if (!GATEWAY_TOKEN) {
 
 const DATA_DIR = path.join(__dirname, '../data')
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json')
+const PROTECTED_FILES = ['AGENTS.md', 'SOUL.md']
 
-app.use(cors({ origin: true, credentials: true }))
+app.use(cors({ origin: ['http://76.13.107.133:3333', 'http://localhost:3333'], credentials: true }))
 app.use(express.json({ limit: '1mb' }))
+
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  next()
+})
 
 // Trust proxy for correct IP behind Caddy
 app.set('trust proxy', 1)
@@ -495,6 +503,16 @@ app.put('/api/memory/file', (req, res) => {
   try {
     const { path: filePath, content } = req.body
     if (!filePath || typeof content !== 'string') return res.status(400).json({ error: 'path and content required' })
+
+    // Max content length check (100KB)
+    if (content.length > 102400) {
+      return res.status(413).json({ error: 'Content too large (max 100KB)' })
+    }
+
+    // Protected files check
+    if (PROTECTED_FILES.includes(filePath)) {
+      return res.status(403).json({ error: 'Cannot modify protected file' })
+    }
 
     const resolved = path.resolve(WORKSPACE, filePath)
     if (!resolved.startsWith(WORKSPACE)) {
@@ -990,6 +1008,201 @@ app.get('/api/transcript/:sessionId', (req, res) => {
       },
       messages,
     })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ========= New System & Cost API Endpoints =========
+
+app.get('/api/system/health', async (_req, res) => {
+  try {
+    const os = await import('os')
+    const { execSync } = await import('child_process')
+    
+    // CPU info
+    const cpus = os.cpus()
+    const loadAvg = os.loadavg()
+    
+    // Memory
+    const totalMem = os.totalmem()
+    const freeMem = os.freemem()
+    const usedMem = totalMem - freeMem
+    
+    // Disk (parse df output)
+    let disk = { total: 0, used: 0, available: 0, percent: 0 }
+    try {
+      const df = execSync('df -B1 / | tail -1').toString().trim().split(/\s+/)
+      disk = { total: parseInt(df[1]), used: parseInt(df[2]), available: parseInt(df[3]), percent: parseInt(df[4]) }
+    } catch {}
+    
+    // Uptime
+    const uptimeSeconds = os.uptime()
+    
+    // Services status
+    const services = ['empire-backend', 'empire-backend-dev', 'mission-control', 'nginx'].map(name => {
+      try {
+        const status = execSync(`systemctl is-active ${name} 2>/dev/null`).toString().trim()
+        return { name, status }
+      } catch {
+        return { name, status: 'inactive' }
+      }
+    })
+
+    // OpenClaw gateway
+    try {
+      const r = await fetch(`${GATEWAY_URL}/tools/invoke`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${GATEWAY_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'session_status', args: {} }),
+        signal: AbortSignal.timeout(5000),
+      })
+      services.push({ name: 'openclaw-gateway', status: r.status < 500 ? 'active' : 'error' })
+    } catch {
+      services.push({ name: 'openclaw-gateway', status: 'error' })
+    }
+    
+    res.json({
+      cpu: { cores: cpus.length, model: cpus[0]?.model, loadAvg: { '1m': loadAvg[0], '5m': loadAvg[1], '15m': loadAvg[2] } },
+      memory: { total: totalMem, used: usedMem, free: freeMem, percent: Math.round((usedMem / totalMem) * 100) },
+      disk,
+      uptime: uptimeSeconds,
+      services,
+      timestamp: new Date().toISOString(),
+    })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/system/logs/:service', (req, res) => {
+  try {
+    const { execSync } = require('child_process')
+    const service = req.params.service
+    // Whitelist services
+    const allowed = ['empire-backend', 'empire-backend-dev', 'mission-control', 'nginx', 'openclaw-gateway']
+    if (!allowed.includes(service)) return res.status(400).json({ error: 'Unknown service' })
+    
+    const lines = Math.min(parseInt(req.query.lines as string) || 100, 500)
+    const since = req.query.since as string
+    
+    let cmd = `journalctl -u ${service} --no-pager -n ${lines} --output short-iso`
+    if (since) cmd += ` --since "${since.replace(/[^a-z0-9 :-]/gi, '')}"`
+    
+    const output = execSync(cmd, { timeout: 10000 }).toString()
+    const logLines = output.trim().split('\n').map((line: string) => {
+      const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\[?\d*\]?:\s*(.*)/)
+      return match ? { timestamp: match[1], host: match[2], unit: match[3], message: match[4] } : { message: line }
+    })
+    
+    res.json({ service, lines: logLines, count: logLines.length })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/system/restart/:service', (req, res) => {
+  try {
+    const { execSync } = require('child_process')
+    const service = req.params.service
+    const allowed = ['empire-backend', 'empire-backend-dev', 'mission-control', 'nginx']
+    if (!allowed.includes(service)) return res.status(400).json({ error: 'Cannot restart this service' })
+    
+    execSync(`systemctl restart ${service}`, { timeout: 30000 })
+    res.json({ ok: true, service, message: `${service} restarted` })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/cost/summary', (req, res) => {
+  try {
+    const sessionsDir = '/root/.openclaw/agents/main/sessions/'
+    if (!fs.existsSync(sessionsDir)) return res.json({ daily: [], total: 0 })
+    
+    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.jsonl') && !f.includes('.lock'))
+    
+    // Aggregate by date and model
+    const dailyCosts: Record<string, { date: string, cost: number, inputTokens: number, outputTokens: number, cacheRead: number, byModel: Record<string, { cost: number, input: number, output: number }> }> = {}
+    
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(path.join(sessionsDir, file), 'utf-8')
+        const lines = content.trim().split('\n')
+        let currentModel = ''
+        
+        for (const line of lines) {
+          let parsed: any
+          try { parsed = JSON.parse(line) } catch { continue }
+          
+          if (parsed.type === 'model_change') currentModel = parsed.modelId || currentModel
+          
+          if (parsed.type === 'message') {
+            const usage = parsed.usage || parsed.message?.usage || {}
+            if (!usage.cost?.total) continue
+            
+            const ts = parsed.timestamp || ''
+            const date = ts.slice(0, 10) // YYYY-MM-DD
+            if (!date) continue
+            
+            if (!dailyCosts[date]) {
+              dailyCosts[date] = { date, cost: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, byModel: {} }
+            }
+            
+            dailyCosts[date].cost += usage.cost.total
+            dailyCosts[date].inputTokens += usage.input || 0
+            dailyCosts[date].outputTokens += usage.output || 0
+            dailyCosts[date].cacheRead += usage.cacheRead || 0
+            
+            const model = currentModel || 'unknown'
+            if (!dailyCosts[date].byModel[model]) {
+              dailyCosts[date].byModel[model] = { cost: 0, input: 0, output: 0 }
+            }
+            dailyCosts[date].byModel[model].cost += usage.cost.total
+            dailyCosts[date].byModel[model].input += usage.input || 0
+            dailyCosts[date].byModel[model].output += usage.output || 0
+          }
+        }
+      } catch { continue }
+    }
+    
+    const daily = Object.values(dailyCosts)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 30) // Last 30 days
+      .map(d => ({ ...d, cost: Math.round(d.cost * 10000) / 10000 }))
+    
+    const totalCost = daily.reduce((sum, d) => sum + d.cost, 0)
+    const totalInput = daily.reduce((sum, d) => sum + d.inputTokens, 0)
+    const totalOutput = daily.reduce((sum, d) => sum + d.outputTokens, 0)
+    
+    res.json({ daily, totalCost: Math.round(totalCost * 100) / 100, totalInput, totalOutput })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/empire/status', async (_req, res) => {
+  try {
+    // Hit dev and prod Empire APIs
+    const results: any = {}
+    
+    for (const [env, port] of [['dev', 8001], ['prod', 8000]]) {
+      try {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+        const r = await fetch(`http://localhost:${port}/api/sync/status`, { signal: controller.signal })
+        clearTimeout(timeout)
+        if (r.ok) {
+          results[env] = { status: 'online', sync: await r.json() }
+        } else {
+          results[env] = { status: 'online', error: `HTTP ${r.status}` }
+        }
+      } catch {
+        results[env] = { status: 'offline' }
+      }
+    }
+    
+    res.json(results)
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }

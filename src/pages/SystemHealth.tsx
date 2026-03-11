@@ -1,0 +1,346 @@
+import React, { useState, useEffect, useRef } from 'react'
+import { Server, Activity, HardDrive, RefreshCw, RotateCw, AlertTriangle } from 'lucide-react'
+import StatCard from '../components/StatCard'
+import StatusBadge from '../components/StatusBadge'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { useApi } from '../hooks/useApi'
+import { useAction } from '../hooks/useAction'
+import { useToast } from '../components/Toast'
+
+interface SystemHealthData {
+  services: Array<{
+    name: string
+    status: 'active' | 'inactive'
+  }>
+  system: {
+    loadAverage: [number, number, number] // 1m, 5m, 15m
+    memory: {
+      used: number
+      total: number
+    }
+    disk: {
+      used: number
+      total: number
+    }
+    uptime: number // seconds
+    cpuCores: number
+  }
+}
+
+interface LogData {
+  lines: Array<{
+    timestamp: string
+    message: string
+  }>
+}
+
+const SERVICES = ['empire-backend', 'empire-backend-dev', 'mission-control', 'nginx', 'openclaw-gateway']
+
+function formatBytes(bytes: number): string {
+  return (bytes / 1073741824).toFixed(1) + ' GB'
+}
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+function getUtilizationBar(value: number, max: number, color: string = 'blue'): JSX.Element {
+  const percentage = Math.min((value / max) * 100, 100)
+  const colorClass = color === 'red' ? 'from-red-600 to-red-400' : 
+                    color === 'yellow' ? 'from-yellow-600 to-yellow-400' :
+                    'from-blue-600 to-blue-400'
+  
+  return (
+    <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+      <div 
+        className={`h-full bg-gradient-to-r ${colorClass} rounded-full transition-all`}
+        style={{ width: `${percentage}%` }}
+      />
+    </div>
+  )
+}
+
+export default function SystemHealth() {
+  const { data: systemHealth, loading: healthLoading } = useApi<SystemHealthData>('/api/system/health', { interval: 10000 })
+  const { toast } = useToast()
+  const restartAction = useAction()
+  const [restartConfirm, setRestartConfirm] = useState<string | null>(null)
+  
+  // Log viewer state
+  const [selectedService, setSelectedService] = useState('empire-backend')
+  const [selectedLines, setSelectedLines] = useState(100)
+  const { data: logData, loading: logLoading, refetch: refetchLogs } = useApi<LogData>(`/api/system/logs/${selectedService}?lines=${selectedLines}`)
+  const logContainerRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll logs to bottom
+  useEffect(() => {
+    if (logContainerRef.current && logData?.lines) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
+    }
+  }, [logData?.lines])
+
+  const handleRestart = async (serviceName: string) => {
+    const res = await restartAction.execute(`/api/system/restart/${serviceName}`, { method: 'POST' })
+    toast(res.ok ? `${serviceName} restart initiated` : `Restart failed: ${res.error}`, res.ok ? 'success' : 'error')
+    setRestartConfirm(null)
+  }
+
+  const handleLogRefresh = () => {
+    refetchLogs()
+    toast('Logs refreshed', 'success')
+  }
+
+  if (healthLoading && !systemHealth) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Server className="w-6 h-6 text-cyan-400" />
+          <h1 className="text-2xl font-bold text-gray-100">System Health</h1>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl p-4 animate-pulse">
+              <div className="h-4 w-24 bg-gray-800 rounded mb-2" />
+              <div className="h-6 w-16 bg-gray-800 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const services = systemHealth?.services || []
+  const system = systemHealth?.system
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3 mb-6">
+        <Server className="w-6 h-6 text-cyan-400" />
+        <h1 className="text-2xl font-bold text-gray-100">System Health</h1>
+      </div>
+
+      {/* Service Status Grid */}
+      <div>
+        <h2 className="text-lg font-semibold text-gray-200 mb-4">Service Status</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {SERVICES.map(serviceName => {
+            const service = services.find(s => s.name === serviceName)
+            const isActive = service?.status === 'active'
+            const canRestart = serviceName !== 'openclaw-gateway'
+            
+            return (
+              <div key={serviceName} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-200 truncate">{serviceName}</h3>
+                  <StatusBadge color={isActive ? 'green' : 'red'} dot>
+                    {isActive ? 'active' : 'inactive'}
+                  </StatusBadge>
+                </div>
+                {canRestart && (
+                  <button
+                    onClick={() => setRestartConfirm(serviceName)}
+                    disabled={restartAction.loading}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors"
+                  >
+                    <RotateCw className={`w-3 h-3 ${restartAction.loading ? 'animate-spin' : ''}`} />
+                    Restart
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* System Gauges */}
+      {system && (
+        <div>
+          <h2 className="text-lg font-semibold text-gray-200 mb-4">System Resources</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* CPU Load */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 rounded-lg bg-gray-800 text-blue-400">
+                  <Activity size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-gray-200">CPU Load</h3>
+                  <p className="text-xs text-gray-500">Load averages</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500">1m</span>
+                  <div className="flex items-center gap-2 flex-1 ml-3">
+                    {getUtilizationBar(system.loadAverage[0], system.cpuCores, 
+                      system.loadAverage[0] / system.cpuCores > 0.8 ? 'red' : 
+                      system.loadAverage[0] / system.cpuCores > 0.6 ? 'yellow' : 'blue')}
+                    <span className="text-xs text-gray-400 w-12 text-right">
+                      {((system.loadAverage[0] / system.cpuCores) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500">5m</span>
+                  <div className="flex items-center gap-2 flex-1 ml-3">
+                    {getUtilizationBar(system.loadAverage[1], system.cpuCores,
+                      system.loadAverage[1] / system.cpuCores > 0.8 ? 'red' : 
+                      system.loadAverage[1] / system.cpuCores > 0.6 ? 'yellow' : 'blue')}
+                    <span className="text-xs text-gray-400 w-12 text-right">
+                      {((system.loadAverage[1] / system.cpuCores) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500">15m</span>
+                  <div className="flex items-center gap-2 flex-1 ml-3">
+                    {getUtilizationBar(system.loadAverage[2], system.cpuCores,
+                      system.loadAverage[2] / system.cpuCores > 0.8 ? 'red' : 
+                      system.loadAverage[2] / system.cpuCores > 0.6 ? 'yellow' : 'blue')}
+                    <span className="text-xs text-gray-400 w-12 text-right">
+                      {((system.loadAverage[2] / system.cpuCores) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Memory */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 rounded-lg bg-gray-800 text-green-400">
+                  <Activity size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-gray-200">Memory</h3>
+                  <p className="text-xs text-gray-500">{formatBytes(system.memory.used)} / {formatBytes(system.memory.total)}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-xl font-bold text-green-400">
+                  {((system.memory.used / system.memory.total) * 100).toFixed(1)}%
+                </span>
+                {getUtilizationBar(system.memory.used, system.memory.total, 
+                  (system.memory.used / system.memory.total) > 0.8 ? 'red' : 
+                  (system.memory.used / system.memory.total) > 0.6 ? 'yellow' : 'blue')}
+              </div>
+            </div>
+
+            {/* Disk */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 rounded-lg bg-gray-800 text-purple-400">
+                  <HardDrive size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-gray-200">Disk Space</h3>
+                  <p className="text-xs text-gray-500">{formatBytes(system.disk.used)} / {formatBytes(system.disk.total)}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-xl font-bold text-purple-400">
+                  {((system.disk.used / system.disk.total) * 100).toFixed(1)}%
+                </span>
+                {getUtilizationBar(system.disk.used, system.disk.total,
+                  (system.disk.used / system.disk.total) > 0.8 ? 'red' : 
+                  (system.disk.used / system.disk.total) > 0.6 ? 'yellow' : 'blue')}
+              </div>
+              <div className="text-xs text-gray-500 mt-3">
+                Uptime: {formatUptime(system.uptime)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Log Viewer */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-200">Log Viewer</h2>
+          <button
+            onClick={handleLogRefresh}
+            disabled={logLoading}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`w-3 h-3 ${logLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+        
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          {/* Controls */}
+          <div className="p-4 border-b border-gray-800 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Service:</label>
+              <select
+                value={selectedService}
+                onChange={(e) => setSelectedService(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm text-gray-200 focus:border-gray-600 focus:outline-none"
+              >
+                {SERVICES.map(service => (
+                  <option key={service} value={service}>{service}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Lines:</label>
+              <select
+                value={selectedLines}
+                onChange={(e) => setSelectedLines(Number(e.target.value))}
+                className="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm text-gray-200 focus:border-gray-600 focus:outline-none"
+              >
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+          </div>
+          
+          {/* Logs */}
+          <div 
+            ref={logContainerRef}
+            className="bg-gray-950 p-4 h-96 overflow-y-auto font-mono text-xs"
+          >
+            {logLoading && logData?.lines?.length === 0 ? (
+              <div className="text-gray-500 text-center py-8">Loading logs...</div>
+            ) : logData?.lines?.length === 0 ? (
+              <div className="text-gray-500 text-center py-8">No logs found</div>
+            ) : (
+              <div className="space-y-1">
+                {logData?.lines?.map((line, i) => (
+                  <div key={i} className="flex">
+                    <span className="text-gray-500 mr-3 flex-shrink-0">
+                      {line.timestamp}
+                    </span>
+                    <span className="text-gray-300 break-all">
+                      {line.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Restart Confirmation Dialog */}
+      <ConfirmDialog
+        open={restartConfirm !== null}
+        title={`Restart ${restartConfirm}`}
+        message={`This will restart the ${restartConfirm} service. It may cause temporary disruption. Continue?`}
+        confirmLabel="Restart"
+        onConfirm={() => restartConfirm && handleRestart(restartConfirm)}
+        onCancel={() => setRestartConfirm(null)}
+        loading={restartAction.loading}
+      />
+    </div>
+  )
+}

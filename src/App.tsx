@@ -11,7 +11,9 @@ import SettingsPage from './pages/SettingsPage'
 import Todos from './pages/Todos'
 import SubAgents from './pages/SubAgents'
 import SessionDetail from './pages/SessionDetail'
-import Files from './pages/Files'
+import SystemHealth from './pages/SystemHealth'
+import CostTracker from './pages/CostTracker'
+import EmpireStatus from './pages/EmpireStatus'
 import Login from './pages/Login'
 import { ToastProvider } from './components/Toast'
 
@@ -87,7 +89,9 @@ function AppShell() {
             <Route path="/cron" element={<CronJobs />} />
             <Route path="/todos" element={<Todos />} />
             <Route path="/memory" element={<Memory />} />
-            <Route path="/files" element={<Files />} />
+            <Route path="/system" element={<SystemHealth />} />
+            <Route path="/costs" element={<CostTracker />} />
+            <Route path="/empire" element={<EmpireStatus />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

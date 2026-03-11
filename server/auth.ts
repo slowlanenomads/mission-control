@@ -138,7 +138,18 @@ export function createUser(username: string, password: string): { id: string; us
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
     throw new Error('Username already exists')
   }
-  if (password.length < 8) throw new Error('Password must be at least 8 characters')
+  
+  // Enhanced password policy: min 12 chars, uppercase, lowercase, digit
+  const missing = []
+  if (password.length < 12) missing.push('at least 12 characters')
+  if (!/[A-Z]/.test(password)) missing.push('at least one uppercase letter')
+  if (!/[a-z]/.test(password)) missing.push('at least one lowercase letter')
+  if (!/[0-9]/.test(password)) missing.push('at least one digit')
+  
+  if (missing.length > 0) {
+    throw new Error(`Password must have ${missing.join(', ')}`)
+  }
+  
   const { hash, salt } = hashPassword(password)
   const user: StoredUser = {
     id: crypto.randomUUID(),

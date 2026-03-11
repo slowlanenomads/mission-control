@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { LayoutDashboard, MessageSquare, Clock, Brain, Settings, LogOut, CheckSquare, Bot, FolderOpen, X } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, Clock, Brain, Settings, LogOut, CheckSquare, Bot, X, Server, DollarSign, Database } from 'lucide-react'
 import { useEffect } from 'react'
 
 const nav = [
@@ -9,7 +9,9 @@ const nav = [
   { to: '/cron', icon: Clock, label: 'Cron Jobs' },
   { to: '/todos', icon: CheckSquare, label: 'Tasks' },
   { to: '/memory', icon: Brain, label: 'Memory' },
-  { to: '/files', icon: FolderOpen, label: 'Files' },
+  { to: '/system', icon: Server, label: 'System' },
+  { to: '/costs', icon: DollarSign, label: 'Costs' },
+  { to: '/empire', icon: Database, label: 'Empire' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Activity, MessageSquare, Clock, Users, Zap, Cpu, DollarSign, TrendingUp, RefreshCw, RotateCw, FileText } from 'lucide-react'
+import { Activity, MessageSquare, Clock, Users, Zap, Cpu, DollarSign, TrendingUp, RefreshCw, RotateCw, FileText, Database } from 'lucide-react'
 import StatCard from '../components/StatCard'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -141,6 +141,9 @@ export default function Dashboard() {
           </button>
           <a href="/memory" className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 hover:bg-gray-700 transition-colors">
             <FileText className="w-4 h-4" /> View Logs
+          </a>
+          <a href="/empire" className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 hover:bg-gray-700 transition-colors">
+            <Database className="w-4 h-4" /> Empire Status
           </a>
         </div>
       </div>
