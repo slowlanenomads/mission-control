@@ -681,7 +681,7 @@ export default function TheGrid() {
         {/* Bottom-Right: Agent Status */}
         <div className="absolute bottom-4 right-4 font-mono text-green-400 text-sm">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur">
-            <div>AGENTS ONLINE: {sessions ? (Array.isArray(sessions) ? sessions : sessions.sessions || []).filter((s: any) => s.status === 'active').length : 0}</div>
+            <div>AGENTS ONLINE: {sessions ? (Array.isArray(sessions) ? sessions : (sessions as any)?.sessions || []).filter((s: any) => s.status === 'active').length : 0}</div>
             <div>CRON ACTIVE: {cronJobs && Array.isArray(cronJobs) ? cronJobs.filter(job => job.enabled).length : 0}</div>
             <div>LAST ACTIVITY: {sessions ? '2m ago' : 'unknown'}</div>
           </div>
@@ -689,7 +689,7 @@ export default function TheGrid() {
       </div>
       
       {/* CRT Scanlines CSS */}
-      <style jsx>{`
+      <style>{`
         .crt-container::after {
           content: '';
           position: absolute;
