@@ -53,7 +53,8 @@ function parseCookies(req: Request): Record<string, string> {
 }
 
 const isProduction = process.env.NODE_ENV === 'production'
-const secureSuffix = isProduction ? '; Secure' : ''
+// No Secure flag — MC runs over HTTP (no HTTPS/SSL configured)
+const secureSuffix = ''
 
 function setTokenCookie(res: Response, token: string) {
   res.setHeader('Set-Cookie', `mc_token=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${7 * 86400}${secureSuffix}`)
@@ -100,6 +101,7 @@ app.post('/api/auth/login', (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown'
   const limit = checkRateLimit(ip)
   if (!limit.allowed) {
+    console.log(`[AUTH RATELIMIT] ip=${ip}`)
     return res.status(429).json({ error: `Too many attempts. Try again in ${limit.retryAfter}s` })
   }
   const { username, password } = req.body
@@ -107,6 +109,7 @@ app.post('/api/auth/login', (req, res) => {
   const user = authenticate(username, password)
   if (!user) {
     recordFailedAttempt(ip)
+    console.log(`[AUTH FAIL] ip=${ip} user=${username}`)
     return res.status(401).json({ error: 'Invalid username or password' })
   }
   clearAttempts(ip)
