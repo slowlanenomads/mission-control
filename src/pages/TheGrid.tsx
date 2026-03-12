@@ -628,7 +628,7 @@ export default function TheGrid() {
   }, [sessions])
   
   return (
-    <div className="fixed inset-0 bg-black overflow-hidden crt-container">
+    <div className="fixed inset-0 lg:left-56 lg:top-[65px] bg-black overflow-hidden crt-container">
       {/* Canvas */}
       <canvas
         ref={canvasRef}
@@ -642,9 +642,9 @@ export default function TheGrid() {
         <div className="absolute top-4 left-4 font-mono text-green-400 text-sm">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur">
             <div className="text-green-400 mb-2">┌─ SYSTEM ──────────────┐</div>
-            <div>│ CPU  {'█'.repeat(Math.floor((systemHealth?.cpu || 0) / 10))}{'░'.repeat(10 - Math.floor((systemHealth?.cpu || 0) / 10))} {(systemHealth?.cpu || 0).toFixed(0)}%</div>
-            <div>│ RAM  {'█'.repeat(Math.floor((systemHealth?.memory || 0) / 10))}{'░'.repeat(10 - Math.floor((systemHealth?.memory || 0) / 10))} {(systemHealth?.memory || 0).toFixed(0)}%</div>
-            <div>│ DISK {'█'.repeat(Math.floor((systemHealth?.disk || 0) / 10))}{'░'.repeat(10 - Math.floor((systemHealth?.disk || 0) / 10))} {(systemHealth?.disk || 0).toFixed(0)}%</div>
+            <div>│ CPU  {'█'.repeat(Math.floor(Number(systemHealth?.cpu?.loadAvg?.['1m'] ?? 0) / 0.2))}{'░'.repeat(Math.max(0, 10 - Math.floor(Number(systemHealth?.cpu?.loadAvg?.['1m'] ?? 0) / 0.2)))} {(Number(systemHealth?.cpu?.loadAvg?.['1m'] ?? 0) * 50).toFixed(0)}%</div>
+            <div>│ RAM  {'█'.repeat(Math.floor(Number(systemHealth?.memory?.percent ?? 0) / 10))}{'░'.repeat(Math.max(0, 10 - Math.floor(Number(systemHealth?.memory?.percent ?? 0) / 10)))} {Number(systemHealth?.memory?.percent ?? 0).toFixed(0)}%</div>
+            <div>│ DISK {'█'.repeat(Math.floor(Number(systemHealth?.disk?.percent ?? 0) / 10))}{'░'.repeat(Math.max(0, 10 - Math.floor(Number(systemHealth?.disk?.percent ?? 0) / 10)))} {Number(systemHealth?.disk?.percent ?? 0).toFixed(0)}%</div>
             <div>│ UPTIME {systemHealth?.uptime ? formatUptime(systemHealth.uptime) : '0d 0h 0m'}</div>
             <div className="text-green-400">└────────────────────────┘</div>
           </div>
@@ -674,7 +674,7 @@ export default function TheGrid() {
         <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 font-mono text-green-400 text-xl">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur text-center">
             <div className="text-green-400 glow">TOKENS ▸ {totalTokens.toLocaleString()}</div>
-            <div className="text-amber-400 glow text-lg">COST ▸ ${totalCost.toFixed(4)}</div>
+            <div className="text-amber-400 glow text-lg">COST ▸ ${Number(totalCost || 0).toFixed(4)}</div>
           </div>
         </div>
         

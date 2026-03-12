@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { Menu } from 'lucide-react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Sidebar from './components/Sidebar'
@@ -102,11 +102,23 @@ function AppShell() {
   )
 }
 
+function AppRouter() {
+  const { user, loading } = useAuth()
+  const location = useLocation()
+  
+  // Grid is public when not authenticated, inside layout when authenticated
+  if (location.pathname === '/grid' && (!user || loading)) {
+    return <TheGrid />
+  }
+  
+  return <AppShell />
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <AppShell />
+        <AppRouter />
       </ToastProvider>
     </AuthProvider>
   )

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 interface UseApiOptions {
   interval?: number
@@ -8,17 +8,19 @@ export function useApi<T>(url: string | null, options?: UseApiOptions) {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const stoppedRef = useRef(false)
 
   const fetchData = useCallback(async () => {
-    if (!url) {
+    if (!url || stoppedRef.current) {
       setLoading(false)
       return
     }
     try {
       const res = await fetch(url, { credentials: 'include' })
       if (res.status === 401) {
-        // Session expired — reload to show login
-        window.location.reload()
+        // Stop polling — don't trigger re-renders that kill the canvas
+        stoppedRef.current = true
+        setLoading(false)
         return
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
