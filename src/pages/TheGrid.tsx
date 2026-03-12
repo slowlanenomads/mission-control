@@ -338,12 +338,22 @@ function drawScanline(ctx: CanvasRenderingContext2D, width: number, height: numb
   ctx.globalAlpha = 1
 }
 
+interface HistoryMessage {
+  role: string
+  content: string
+  timestamp?: string
+}
+
 export default function TheGrid() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [totalTokens, setTotalTokens] = useState(0)
   const [totalCost, setTotalCost] = useState(0)
+  const [selectedNode, setSelectedNode] = useState<AgentNode | null>(null)
+  const [nodeHistory, setNodeHistory] = useState<HistoryMessage[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
   
   // API data
   const { data: sessions } = useApi<Session[]>('/api/sessions?activeMinutes=60&messageLimit=3', { interval: 5000 })
@@ -396,6 +406,53 @@ export default function TheGrid() {
       window.removeEventListener('resize', updateDimensions)
     }
   }, [])
+  
+  // Handle canvas clicks — find nearest node
+  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    
+    const rect = canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    
+    const state = stateRef.current
+    let closest: AgentNode | null = null
+    let closestDist = Infinity
+    
+    for (const node of state.nodes) {
+      const dist = Math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2)
+      if (dist < node.radius + 15 && dist < closestDist) {
+        closest = node
+        closestDist = dist
+      }
+    }
+    
+    if (closest) {
+      setSelectedNode(closest)
+      // Fetch history for this node's session
+      const sessionKey = closest.id === 'main' 
+        ? sessions && (Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []).find((s: Session) => s.kind === 'main')?.sessionKey
+        : (Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []).find((s: Session) => s.sessionKey.includes(closest!.id))?.sessionKey || closest.id
+      
+      if (sessionKey) {
+        setLoadingHistory(true)
+        setNodeHistory([])
+        fetch(`/api/sessions/${encodeURIComponent(sessionKey)}/history?limit=30`, { credentials: 'include' })
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data?.messages) {
+              setNodeHistory(data.messages.filter((m: any) => m.role !== 'system').slice(-30))
+            }
+          })
+          .catch(() => {})
+          .finally(() => setLoadingHistory(false))
+      }
+    } else {
+      setSelectedNode(null)
+      setNodeHistory([])
+    }
+  }, [sessions])
   
   // Update nodes based on session data
   useEffect(() => {
@@ -632,8 +689,9 @@ export default function TheGrid() {
       {/* Canvas */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0"
+        className="absolute inset-0 cursor-crosshair"
         style={{ imageRendering: 'pixelated' }}
+        onClick={handleCanvasClick}
       />
       
       {/* HUD Overlays */}
@@ -688,6 +746,61 @@ export default function TheGrid() {
         </div>
       </div>
       
+      {/* Conversation Panel */}
+      {selectedNode && (
+        <div 
+          ref={panelRef}
+          className="absolute top-4 right-4 w-[420px] max-h-[70vh] bg-black/90 border border-green-800 rounded-lg backdrop-blur-md z-30 flex flex-col overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-green-800/50">
+            <div className="font-mono text-green-400 text-sm flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${selectedNode.kind === 'main' ? 'bg-green-400' : 'bg-cyan-400'}`} />
+              {selectedNode.label}
+            </div>
+            <button 
+              onClick={() => { setSelectedNode(null); setNodeHistory([]) }}
+              className="text-green-600 hover:text-green-400 font-mono text-lg leading-none"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-[100px] max-h-[60vh] scrollbar-thin">
+            {loadingHistory ? (
+              <div className="text-green-600 font-mono text-xs animate-pulse text-center py-8">
+                LOADING TRANSMISSION LOG...
+              </div>
+            ) : nodeHistory.length === 0 ? (
+              <div className="text-green-800 font-mono text-xs text-center py-8">
+                NO TRANSMISSIONS FOUND
+              </div>
+            ) : (
+              nodeHistory.map((msg, i) => (
+                <div key={i} className={`font-mono text-xs ${msg.role === 'user' ? 'text-amber-400' : 'text-green-400'}`}>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className={`text-[10px] uppercase font-bold ${msg.role === 'user' ? 'text-amber-600' : 'text-green-700'}`}>
+                      {msg.role === 'user' ? '▶ INBOUND' : '◀ OUTBOUND'}
+                    </span>
+                    {msg.timestamp && (
+                      <span className="text-green-800 text-[10px]">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`pl-2 border-l-2 ${msg.role === 'user' ? 'border-amber-800' : 'border-green-800'} whitespace-pre-wrap break-words leading-relaxed`}>
+                    {typeof msg.content === 'string' 
+                      ? msg.content.slice(0, 500) + (msg.content.length > 500 ? '...' : '')
+                      : JSON.stringify(msg.content).slice(0, 500)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="px-4 py-2 border-t border-green-800/50 font-mono text-[10px] text-green-700">
+            {nodeHistory.length} messages • Click elsewhere to close
+          </div>
+        </div>
+      )}
+
       {/* CRT Scanlines CSS */}
       <style>{`
         .crt-container::after {
