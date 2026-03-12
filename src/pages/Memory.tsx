@@ -1,8 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react'
-import { Brain, Search, FileText, FolderOpen, ArrowLeft, Clock, HardDrive, Save, Edit3, X } from 'lucide-react'
+import { Brain, Search, FileText, FolderOpen, ArrowLeft, Clock, HardDrive } from 'lucide-react'
 import { useApi } from '../hooks/useApi'
-import { useAction } from '../hooks/useAction'
-import { useToast } from '../components/Toast'
 import { Skeleton } from '../components/Skeleton'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -52,10 +50,7 @@ export default function Memory() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [searchUrl, setSearchUrl] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [editContent, setEditContent] = useState('')
-  const { toast } = useToast()
-  const saveAction = useAction()
+
 
   const { data: files, loading: filesLoading } = useApi<MemoryFile[]>('/api/memory/files', { interval: 30000 })
   const { data: fileContent, loading: contentLoading, refetch: refetchFile } = useApi<FileContent>(
@@ -68,12 +63,6 @@ export default function Memory() {
   const coreFiles = fileList.filter(f => !f.path.startsWith('memory/'))
   const dailyFiles = fileList.filter(f => f.path.startsWith('memory/'))
 
-  useEffect(() => {
-    if (fileContent?.content && !editing) {
-      setEditContent(fileContent.content)
-    }
-  }, [fileContent?.content])
-
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     if (query.trim()) {
@@ -85,29 +74,12 @@ export default function Memory() {
   const openFile = useCallback((filePath: string) => {
     setSelectedFile(filePath)
     setView('viewer')
-    setEditing(false)
   }, [])
 
   const goBack = useCallback(() => {
     setView('files')
     setSelectedFile(null)
-    setEditing(false)
   }, [])
-
-  const handleSave = async () => {
-    if (!selectedFile) return
-    const res = await saveAction.execute('/api/memory/file', {
-      method: 'PUT',
-      body: JSON.stringify({ path: selectedFile, content: editContent }),
-    })
-    if (res.ok) {
-      toast(`Saved ${selectedFile}`)
-      setEditing(false)
-      refetchFile()
-    } else {
-      toast(`Failed to save: ${res.error}`, 'error')
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -129,27 +101,7 @@ export default function Memory() {
             </p>
           </div>
         </div>
-        {view === 'viewer' && selectedFile && !contentLoading && (
-          <div className="flex items-center gap-2">
-            {editing ? (
-              <>
-                <button onClick={() => { setEditing(false); setEditContent(fileContent?.content || '') }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-700 transition-colors">
-                  <X size={14} /> Cancel
-                </button>
-                <button onClick={handleSave} disabled={saveAction.loading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 border border-green-500 rounded-lg text-xs text-white hover:bg-green-500 disabled:opacity-50 transition-colors">
-                  <Save size={14} /> {saveAction.loading ? 'Saving...' : 'Save'}
-                </button>
-              </>
-            ) : (
-              <button onClick={() => setEditing(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-700 transition-colors">
-                <Edit3 size={14} /> Edit
-              </button>
-            )}
-          </div>
-        )}
+
       </div>
 
       <form onSubmit={handleSearch} className="flex gap-3">
@@ -249,12 +201,6 @@ export default function Memory() {
                   <Skeleton key={i} className={`h-4 ${i % 3 === 0 ? 'w-full' : i % 3 === 1 ? 'w-4/5' : 'w-3/5'}`} />
                 ))}
               </div>
-            ) : editing ? (
-              <textarea
-                value={editContent}
-                onChange={e => setEditContent(e.target.value)}
-                className="w-full h-[60vh] bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-gray-300 font-mono leading-relaxed focus:outline-none focus:border-gray-600 resize-none"
-              />
             ) : fileContent ? (
               <pre className="text-sm text-gray-300 whitespace-pre-wrap break-words font-mono leading-relaxed">{fileContent.content}</pre>
             ) : (

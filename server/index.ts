@@ -501,40 +501,7 @@ app.get('/api/memory/file', (req, res) => {
   }
 })
 
-// Memory file save
-app.put('/api/memory/file', (req, res) => {
-  try {
-    const { path: filePath, content } = req.body
-    if (!filePath || typeof content !== 'string') return res.status(400).json({ error: 'path and content required' })
-
-    // Max content length check (100KB)
-    if (content.length > 102400) {
-      return res.status(413).json({ error: 'Content too large (max 100KB)' })
-    }
-
-    // Protected files check
-    if (PROTECTED_FILES.includes(filePath)) {
-      return res.status(403).json({ error: 'Cannot modify protected file' })
-    }
-
-    const resolved = path.resolve(WORKSPACE, filePath)
-    if (!resolved.startsWith(WORKSPACE)) {
-      return res.status(403).json({ error: 'Access denied' })
-    }
-    if (!ALLOWED_EXTENSIONS.some(ext => resolved.endsWith(ext))) {
-      return res.status(403).json({ error: 'File type not allowed' })
-    }
-
-    // Ensure directory exists
-    const dir = path.dirname(resolved)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-
-    fs.writeFileSync(resolved, content, 'utf8')
-    res.json({ ok: true })
-  } catch (e: any) {
-    res.status(500).json({ error: e.message })
-  }
-})
+// Memory files are read-only from the web UI
 
 // Dashboard actions
 app.post('/api/actions/sync', async (_req, res) => {
