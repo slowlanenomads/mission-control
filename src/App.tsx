@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
+import TheGrid from './pages/TheGrid'
 import Sessions from './pages/Sessions'
 import CronJobs from './pages/CronJobs'
 import Memory from './pages/Memory'
@@ -83,6 +84,7 @@ function AppShell() {
         <main className="p-4 sm:p-6 lg:p-8">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/grid" element={<TheGrid />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/subagents" element={<SubAgents />} />
             <Route path="/session/:sessionId" element={<SessionDetail />} />
