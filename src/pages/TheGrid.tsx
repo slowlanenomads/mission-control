@@ -71,9 +71,24 @@ interface Session {
 }
 
 interface SystemHealth {
-  cpu?: number
-  memory?: number
-  disk?: number
+  cpu?: {
+    cores: number
+    loadAvg: {
+      '1m': number
+      '5m': number
+      '15m': number
+    }
+  }
+  memory?: {
+    total: number
+    used: number
+    percent: number
+  }
+  disk?: {
+    total: number
+    used: number
+    percent: number
+  }
   uptime?: number
 }
 

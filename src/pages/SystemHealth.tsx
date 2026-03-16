@@ -12,19 +12,28 @@ interface SystemHealthData {
     name: string
     status: 'active' | 'inactive'
   }>
-  system: {
-    loadAverage: [number, number, number] // 1m, 5m, 15m
-    memory: {
-      used: number
-      total: number
+  cpu: {
+    cores: number
+    model: string
+    loadAvg: {
+      '1m': number
+      '5m': number
+      '15m': number
     }
-    disk: {
-      used: number
-      total: number
-    }
-    uptime: number // seconds
-    cpuCores: number
   }
+  memory: {
+    total: number
+    used: number
+    free: number
+    percent: number
+  }
+  disk: {
+    total: number
+    used: number
+    available: number
+    percent: number
+  }
+  uptime: number // seconds
 }
 
 interface LogData {
@@ -117,7 +126,10 @@ export default function SystemHealth() {
   }
 
   const services = systemHealth?.services || []
-  const system = systemHealth?.system
+  const cpu = systemHealth?.cpu
+  const memory = systemHealth?.memory
+  const disk = systemHealth?.disk
+  const uptime = systemHealth?.uptime
 
   return (
     <div className="space-y-6">
@@ -160,7 +172,7 @@ export default function SystemHealth() {
       </div>
 
       {/* System Gauges */}
-      {system && (
+      {cpu && memory && disk && (
         <div>
           <h2 className="text-lg font-semibold text-gray-200 mb-4">System Resources</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -179,33 +191,33 @@ export default function SystemHealth() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">1m</span>
                   <div className="flex items-center gap-2 flex-1 ml-3">
-                    {getUtilizationBar(system.loadAverage[0], system.cpuCores, 
-                      system.loadAverage[0] / system.cpuCores > 0.8 ? 'red' : 
-                      system.loadAverage[0] / system.cpuCores > 0.6 ? 'yellow' : 'blue')}
+                    {getUtilizationBar(cpu.loadAvg['1m'], cpu.cores, 
+                      cpu.loadAvg['1m'] / cpu.cores > 0.8 ? 'red' : 
+                      cpu.loadAvg['1m'] / cpu.cores > 0.6 ? 'yellow' : 'blue')}
                     <span className="text-xs text-gray-400 w-12 text-right">
-                      {((system.loadAverage[0] / system.cpuCores) * 100).toFixed(1)}%
+                      {((cpu.loadAvg['1m'] / cpu.cores) * 100).toFixed(1)}%
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">5m</span>
                   <div className="flex items-center gap-2 flex-1 ml-3">
-                    {getUtilizationBar(system.loadAverage[1], system.cpuCores,
-                      system.loadAverage[1] / system.cpuCores > 0.8 ? 'red' : 
-                      system.loadAverage[1] / system.cpuCores > 0.6 ? 'yellow' : 'blue')}
+                    {getUtilizationBar(cpu.loadAvg['5m'], cpu.cores,
+                      cpu.loadAvg['5m'] / cpu.cores > 0.8 ? 'red' : 
+                      cpu.loadAvg['5m'] / cpu.cores > 0.6 ? 'yellow' : 'blue')}
                     <span className="text-xs text-gray-400 w-12 text-right">
-                      {((system.loadAverage[1] / system.cpuCores) * 100).toFixed(1)}%
+                      {((cpu.loadAvg['5m'] / cpu.cores) * 100).toFixed(1)}%
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">15m</span>
                   <div className="flex items-center gap-2 flex-1 ml-3">
-                    {getUtilizationBar(system.loadAverage[2], system.cpuCores,
-                      system.loadAverage[2] / system.cpuCores > 0.8 ? 'red' : 
-                      system.loadAverage[2] / system.cpuCores > 0.6 ? 'yellow' : 'blue')}
+                    {getUtilizationBar(cpu.loadAvg['15m'], cpu.cores,
+                      cpu.loadAvg['15m'] / cpu.cores > 0.8 ? 'red' : 
+                      cpu.loadAvg['15m'] / cpu.cores > 0.6 ? 'yellow' : 'blue')}
                     <span className="text-xs text-gray-400 w-12 text-right">
-                      {((system.loadAverage[2] / system.cpuCores) * 100).toFixed(1)}%
+                      {((cpu.loadAvg['15m'] / cpu.cores) * 100).toFixed(1)}%
                     </span>
                   </div>
                 </div>
@@ -220,16 +232,16 @@ export default function SystemHealth() {
                 </div>
                 <div>
                   <h3 className="text-sm font-medium text-gray-200">Memory</h3>
-                  <p className="text-xs text-gray-500">{formatBytes(system.memory.used)} / {formatBytes(system.memory.total)}</p>
+                  <p className="text-xs text-gray-500">{formatBytes(memory.used)} / {formatBytes(memory.total)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-xl font-bold text-green-400">
-                  {((system.memory.used / system.memory.total) * 100).toFixed(1)}%
+                  {memory.percent.toFixed(1)}%
                 </span>
-                {getUtilizationBar(system.memory.used, system.memory.total, 
-                  (system.memory.used / system.memory.total) > 0.8 ? 'red' : 
-                  (system.memory.used / system.memory.total) > 0.6 ? 'yellow' : 'blue')}
+                {getUtilizationBar(memory.used, memory.total, 
+                  memory.percent > 80 ? 'red' : 
+                  memory.percent > 60 ? 'yellow' : 'blue')}
               </div>
             </div>
 
@@ -241,19 +253,19 @@ export default function SystemHealth() {
                 </div>
                 <div>
                   <h3 className="text-sm font-medium text-gray-200">Disk Space</h3>
-                  <p className="text-xs text-gray-500">{formatBytes(system.disk.used)} / {formatBytes(system.disk.total)}</p>
+                  <p className="text-xs text-gray-500">{formatBytes(disk.used)} / {formatBytes(disk.total)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-xl font-bold text-purple-400">
-                  {((system.disk.used / system.disk.total) * 100).toFixed(1)}%
+                  {disk.percent.toFixed(1)}%
                 </span>
-                {getUtilizationBar(system.disk.used, system.disk.total,
-                  (system.disk.used / system.disk.total) > 0.8 ? 'red' : 
-                  (system.disk.used / system.disk.total) > 0.6 ? 'yellow' : 'blue')}
+                {getUtilizationBar(disk.used, disk.total,
+                  disk.percent > 80 ? 'red' : 
+                  disk.percent > 60 ? 'yellow' : 'blue')}
               </div>
               <div className="text-xs text-gray-500 mt-3">
-                Uptime: {formatUptime(system.uptime)}
+                Uptime: {formatUptime(uptime || 0)}
               </div>
             </div>
           </div>

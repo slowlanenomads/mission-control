@@ -330,15 +330,29 @@ app.get('/api/session-status', async (_req, res) => {
   }
 })
 
+// Strip [plugins] and other non-JSON lines from openclaw CLI stdout
+function stripCliNoise(output: string): string {
+  return output.replace(/^\[plugins\].*$/gm, '').trim()
+}
+
+// Sanitize cron job IDs to prevent command injection (UUID format only)
+function safeCronId(id: string): string {
+  if (!/^[a-f0-9-]+$/i.test(id)) throw new Error('Invalid cron job ID')
+  return id
+}
+
 app.get('/api/cron', async (_req, res) => {
   try {
-    const result = await invokeGateway('cron', { action: 'list', includeDisabled: true })
+    const { execSync } = require('child_process')
+    const raw = execSync('openclaw cron list --json 2>/dev/null', { timeout: 10000 }).toString()
+    const result = JSON.parse(stripCliNoise(raw))
+    
     // Normalize cron job format for frontend
     const rawJobs = result?.jobs || (Array.isArray(result) ? result : [])
     const jobs = rawJobs.map((j: any) => ({
       id: j.id,
       name: j.name || j.id,
-      text: j.payload?.text || j.text,
+      text: j.payload?.message || j.payload?.text || j.text,
       schedule: j.schedule?.expr || j.schedule || '',
       enabled: j.enabled !== false,
       lastRun: j.state?.lastRunAtMs ? new Date(j.state.lastRunAtMs).toISOString() : undefined,
@@ -356,8 +370,10 @@ app.get('/api/cron', async (_req, res) => {
 // Cron job actions
 app.post('/api/cron/:id/run', async (req, res) => {
   try {
-    const result = await invokeGateway('cron', { action: 'run', jobId: req.params.id })
-    res.json({ ok: true, result })
+    const { execSync } = require('child_process')
+    const id = safeCronId(req.params.id)
+    const output = execSync(`openclaw cron run ${id} 2>/dev/null`, { timeout: 10000 }).toString()
+    res.json({ ok: true, result: output.trim() })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -365,8 +381,17 @@ app.post('/api/cron/:id/run', async (req, res) => {
 
 app.patch('/api/cron/:id', async (req, res) => {
   try {
-    const result = await invokeGateway('cron', { action: 'update', jobId: req.params.id, ...req.body })
-    res.json({ ok: true, result })
+    const { execSync } = require('child_process')
+    const { enabled } = req.body
+    
+    if (typeof enabled === 'boolean') {
+      const id = safeCronId(req.params.id)
+      const action = enabled ? 'enable' : 'disable'
+      const output = execSync(`openclaw cron ${action} ${id} 2>/dev/null`, { timeout: 10000 }).toString()
+      res.json({ ok: true, result: output.trim() })
+    } else {
+      res.status(400).json({ error: 'Only enabled field updates are supported' })
+    }
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -374,8 +399,10 @@ app.patch('/api/cron/:id', async (req, res) => {
 
 app.delete('/api/cron/:id', async (req, res) => {
   try {
-    const result = await invokeGateway('cron', { action: 'delete', jobId: req.params.id })
-    res.json({ ok: true, result })
+    const { execSync } = require('child_process')
+    const id = safeCronId(req.params.id)
+    const output = execSync(`openclaw cron delete ${id} 2>/dev/null`, { timeout: 10000 }).toString()
+    res.json({ ok: true, result: output.trim() })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -383,8 +410,21 @@ app.delete('/api/cron/:id', async (req, res) => {
 
 app.post('/api/cron', async (req, res) => {
   try {
-    const result = await invokeGateway('cron', { action: 'create', ...req.body })
-    res.json({ ok: true, result })
+    const { execSync } = require('child_process')
+    const { name, schedule, text, enabled = true } = req.body
+    
+    if (!name || !schedule || !text) {
+      return res.status(400).json({ error: 'name, schedule, and text are required' })
+    }
+    
+    // Build openclaw cron create command — use env vars to avoid shell injection
+    const env = { ...process.env, _CRON_NAME: name, _CRON_SCHED: schedule, _CRON_TEXT: text }
+    let cmd = `openclaw cron create --name "$_CRON_NAME" --schedule "$_CRON_SCHED" --text "$_CRON_TEXT"`
+    if (!enabled) cmd += ' --disabled'
+    cmd += ' 2>/dev/null'
+    
+    const output = execSync(cmd, { timeout: 10000, env }).toString()
+    res.json({ ok: true, result: stripCliNoise(output).trim() })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -392,8 +432,16 @@ app.post('/api/cron', async (req, res) => {
 
 app.get('/api/cron/:id/runs', async (req, res) => {
   try {
-    const result = await invokeGateway('cron', { action: 'runs', jobId: req.params.id })
-    res.json(result)
+    const { execSync } = require('child_process')
+    try {
+      const id = safeCronId(req.params.id)
+      const output = execSync(`openclaw cron runs ${id} --json 2>/dev/null`, { timeout: 10000 }).toString()
+      const result = JSON.parse(stripCliNoise(output))
+      res.json(result)
+    } catch {
+      // If the command fails or returns no data, return empty array
+      res.json({ runs: [] })
+    }
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -506,8 +554,9 @@ app.get('/api/memory/file', (req, res) => {
 // Dashboard actions
 app.post('/api/actions/sync', async (_req, res) => {
   try {
-    const result = await invokeGateway('empire_sync', {})
-    res.json({ ok: true, result })
+    const { execSync } = require('child_process')
+    const output = execSync('bash /root/scripts/empire-daily-sync.sh 2>&1 | tail -5', { timeout: 60000 }).toString()
+    res.json({ ok: true, result: output.trim() })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -515,8 +564,9 @@ app.post('/api/actions/sync', async (_req, res) => {
 
 app.post('/api/actions/restart-gateway', async (_req, res) => {
   try {
-    const result = await invokeGateway('gateway', { action: 'restart' })
-    res.json({ ok: true, result })
+    const { execSync } = require('child_process')
+    const output = execSync('openclaw gateway restart 2>/dev/null', { timeout: 15000 }).toString()
+    res.json({ ok: true, result: output.trim() })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
