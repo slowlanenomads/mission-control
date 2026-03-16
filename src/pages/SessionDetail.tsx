@@ -125,6 +125,7 @@ export default function SessionDetail() {
   const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set())
   const [showTools, setShowTools] = useState(true)
   const [showThinking, setShowThinking] = useState(false)
+  const [searchText, setSearchText] = useState('')
 
   useEffect(() => {
     fetch(`/api/transcript/${sessionId}`, {
@@ -155,11 +156,46 @@ export default function SessionDetail() {
 
   const collapseAll = () => setExpandedMessages(new Set())
 
+  // Search functionality
+  const getMessageText = (message: Message): string => {
+    return message.content?.map(part => part.text || '').join(' ') || ''
+  }
+
+  const highlightText = (text: string, searchTerm: string): React.ReactNode => {
+    if (!searchTerm.trim()) return text
+    
+    const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+    const parts = text.split(regex)
+    
+    return parts.map((part, index) => 
+      regex.test(part) ? (
+        <mark key={index} className="bg-yellow-500/30 text-yellow-200 rounded px-0.5">
+          {part}
+        </mark>
+      ) : part
+    )
+  }
+
   if (loading) return <div className="p-8 text-gray-400">Loading transcript...</div>
   if (error) return <div className="p-8 text-red-400">Error: {error}</div>
   if (!data) return <div className="p-8 text-gray-400">No data</div>
 
   const { session, stats, messages } = data
+  
+  // Filter messages based on search
+  const filteredMessages = searchText.trim() 
+    ? messages.filter((message, index) => {
+        const messageText = getMessageText(message).toLowerCase()
+        return messageText.includes(searchText.toLowerCase())
+      })
+    : messages
+
+  const filteredIndices = searchText.trim()
+    ? messages.map((message, index) => {
+        const messageText = getMessageText(message).toLowerCase()
+        return messageText.includes(searchText.toLowerCase()) ? index : -1
+      }).filter(index => index !== -1)
+    : messages.map((_, index) => index)
 
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
@@ -234,12 +270,43 @@ export default function SessionDetail() {
           <input type="checkbox" checked={showThinking} onChange={e => setShowThinking(e.target.checked)} className="rounded" />
           Show thinking
         </label>
-        <span className="ml-auto text-xs text-gray-500">{messages.length} entries</span>
+        <span className="ml-auto text-xs text-gray-500">
+          {searchText.trim() ? `${filteredMessages.length} of ${messages.length}` : `${messages.length}`} messages
+        </span>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="Search messages..."
+            className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 pr-8"
+          />
+          {searchText && (
+            <button
+              onClick={() => setSearchText('')}
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-300 p-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+        {searchText.trim() && (
+          <span className="text-xs text-gray-400">
+            {filteredMessages.length} results
+          </span>
+        )}
       </div>
 
       {/* Message Timeline */}
       <div className="space-y-1">
-        {messages.map((msg, idx) => {
+        {filteredMessages.map((msg, filteredIdx) => {
+          const idx = filteredIndices[filteredIdx]
           // Filter tool results if hidden
           if (!showTools && msg.role === 'toolResult') return null
           // Check if this message is only tool calls
@@ -266,12 +333,18 @@ export default function SessionDetail() {
                 {/* Preview */}
                 <span className="text-xs text-gray-400 flex-1 truncate">
                   {msg.content?.map((p: ContentPart) => {
-                    if (p.type === 'text') return p.text?.slice(0, 100)
+                    if (p.type === 'text') {
+                      const preview = p.text?.slice(0, 100) || ''
+                      return searchText.trim() ? highlightText(preview, searchText) : preview
+                    }
                     if (p.type === 'toolCall') return `🔧 ${p.name}`
                     if (p.type === 'toolResult') return `📋 result`
                     if (p.type === 'thinking') return `💭 thinking`
                     return ''
-                  }).filter(Boolean).join(' | ')}
+                  }).filter(Boolean).reduce((acc, curr, idx) => {
+                    if (idx === 0) return curr
+                    return <>{acc} | {curr}</>
+                  }, '' as React.ReactNode)}
                 </span>
 
                 {/* Usage badge */}
@@ -294,7 +367,7 @@ export default function SessionDetail() {
                       <div key={pi} className="mt-2">
                         {part.type === 'text' && (
                           <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed max-h-[500px] overflow-y-auto">
-                            {part.text}
+                            {searchText.trim() ? highlightText(part.text || '', searchText) : part.text}
                           </pre>
                         )}
                         {part.type === 'toolCall' && (

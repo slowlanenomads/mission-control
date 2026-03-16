@@ -102,7 +102,7 @@ export function Sidebar({ onLogout, username, mobileOpen, onClose }: SidebarProp
             Sign out
           </button>
         )}
-        <p className="text-[10px] text-gray-600 px-2 mt-2">OpenClaw v0.2.0</p>
+        <p className="text-[10px] text-gray-600 px-2 mt-2">Mission Control v0.3.0</p>
       </div>
     </aside>
   )

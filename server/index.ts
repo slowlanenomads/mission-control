@@ -330,6 +330,77 @@ app.get('/api/session-status', async (_req, res) => {
   }
 })
 
+app.get('/api/system/version', async (_req, res) => {
+  try {
+    const { execSync } = require('child_process')
+    let openclawVersion = 'Unknown'
+    try {
+      const raw = execSync('openclaw --version 2>/dev/null', { timeout: 5000 }).toString().trim()
+      const lines = raw.split('\n')
+      for (const line of lines) {
+        if (!line.startsWith('[plugins]') && line.includes('version') || line.match(/^\d+\.\d+/)) {
+          openclawVersion = line.replace(/^openclaw\s+/, '').trim()
+          break
+        }
+      }
+    } catch (e: any) {
+      console.warn('Failed to get OpenClaw version:', e.message)
+    }
+    res.json({
+      openclaw: openclawVersion,
+      node: process.version,
+      mc: '0.3.0'
+    })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current and new passwords required' })
+  }
+  
+  try {
+    const user = (req as any).user
+    const authenticated = authenticate(user.username, currentPassword)
+    if (!authenticated) {
+      return res.status(401).json({ error: 'Current password is incorrect' })
+    }
+    
+    // Validate new password (same rules as createUser)
+    if (newPassword.length < 12) {
+      return res.status(400).json({ error: 'Password must be at least 12 characters' })
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      return res.status(400).json({ error: 'Password must contain an uppercase letter' })
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      return res.status(400).json({ error: 'Password must contain a lowercase letter' })
+    }
+    if (!/\d/.test(newPassword)) {
+      return res.status(400).json({ error: 'Password must contain a digit' })
+    }
+    
+    // Update password
+    const usersFile = path.join(DATA_DIR, 'users.json')
+    const usersData = JSON.parse(fs.readFileSync(usersFile, 'utf-8'))
+    const targetUser = usersData.users.find((u: any) => u.id === user.id)
+    if (targetUser) {
+      targetUser.passwordHash = crypto.createHash('sha256').update(newPassword + targetUser.salt).digest('hex')
+      fs.writeFileSync(usersFile, JSON.stringify(usersData, null, 2))
+      console.log(`🔐 Password changed for user: ${user.username}`)
+      res.json({ success: true })
+    } else {
+      res.status(404).json({ error: 'User not found' })
+    }
+  } catch (e: any) {
+    console.error('Password change error:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // Strip [plugins] and other non-JSON lines from openclaw CLI stdout
 function stripCliNoise(output: string): string {
   return output.replace(/^\[plugins\].*$/gm, '').trim()

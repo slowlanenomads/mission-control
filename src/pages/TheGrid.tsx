@@ -375,6 +375,7 @@ export default function TheGrid() {
   const { data: subagentRuns } = useApi<SubagentRun[]>('/api/subagent-runs?limit=20', { interval: 10000 })
   const { data: systemHealth } = useApi<SystemHealth>('/api/system/health', { interval: 10000 })
   const { data: cronJobs } = useApi<CronJob[]>('/api/cron', { interval: 30000 })
+  const { data: sessionStatus } = useApi<{model: string, inputTokens: number, outputTokens: number, cost?: number}>('/api/session-status', { interval: 10000 })
   
   const stateRef = useRef({
     nodes: [] as AgentNode[],
@@ -522,9 +523,10 @@ export default function TheGrid() {
     
     // Create cron nodes
     const cronNodes: AgentNode[] = []
-    if (cronJobs && Array.isArray(cronJobs)) {
-      const activeCron = cronJobs.filter(job => job.enabled)
-      activeCron.slice(0, 6).forEach((job, index) => {
+    const cronList = Array.isArray(cronJobs) ? cronJobs : (cronJobs as any)?.jobs ?? []
+    if (cronList.length > 0) {
+      const activeCron = cronList.filter((job: CronJob) => job.enabled)
+      activeCron.slice(0, 6).forEach((job: CronJob, index: number) => {
         const angle = (index / Math.max(activeCron.length, 6)) * Math.PI * 2
         const distance = 250
         const targetX = centerX + Math.cos(angle) * distance
@@ -582,10 +584,17 @@ export default function TheGrid() {
     state.nodes = newNodes
     state.packets = [...state.packets.filter(p => p.progress < 1), ...newPackets]
     
-    // Update total tokens and cost (mock data for now)
-    setTotalTokens(prev => prev + Math.floor(Math.random() * 100))
-    setTotalCost(prev => prev + Math.random() * 0.01)
   }, [sessions, cronJobs, dimensions])
+
+  // Update real token and cost data
+  useEffect(() => {
+    if (sessionStatus) {
+      const totalInput = sessionStatus.inputTokens || 0
+      const totalOutput = sessionStatus.outputTokens || 0
+      setTotalTokens(totalInput + totalOutput)
+      setTotalCost(sessionStatus.cost || 0)
+    }
+  }, [sessionStatus])
   
   // Animation loop
   useEffect(() => {
@@ -733,13 +742,17 @@ export default function TheGrid() {
         {/* Bottom-Left: Cron Timeline */}
         <div className="absolute bottom-4 left-4 font-mono text-green-400 text-sm">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur">
-            {cronJobs && Array.isArray(cronJobs) ? (
-              cronJobs.filter(job => job.enabled).slice(0, 3).map((job, index) => (
-                <div key={index}>⏱ {job.name} in {formatCountdown(job.nextRun)}</div>
-              ))
-            ) : (
-              <div>⏱ No cron jobs</div>
-            )}
+            {(() => {
+              const cronList = Array.isArray(cronJobs) ? cronJobs : (cronJobs as any)?.jobs ?? []
+              const enabledJobs = cronList.filter((job: CronJob) => job.enabled)
+              return enabledJobs.length > 0 ? (
+                enabledJobs.slice(0, 3).map((job: CronJob, index: number) => (
+                  <div key={index}>⏱ {job.name} in {formatCountdown(job.nextRun)}</div>
+                ))
+              ) : (
+                <div>⏱ No cron jobs</div>
+              )
+            })()}
           </div>
         </div>
         
@@ -754,9 +767,20 @@ export default function TheGrid() {
         {/* Bottom-Right: Agent Status */}
         <div className="absolute bottom-4 right-4 font-mono text-green-400 text-sm">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur">
-            <div>AGENTS ONLINE: {sessions ? (Array.isArray(sessions) ? sessions : (sessions as any)?.sessions || []).filter((s: any) => s.status === 'active').length : 0}</div>
-            <div>CRON ACTIVE: {cronJobs && Array.isArray(cronJobs) ? cronJobs.filter(job => job.enabled).length : 0}</div>
-            <div>LAST ACTIVITY: {sessions ? '2m ago' : 'unknown'}</div>
+            <div>AGENTS ONLINE: {(() => {
+              const sessionsArray = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions || []
+              return sessionsArray.length
+            })()}</div>
+            <div>CRON ACTIVE: {(() => {
+              const cronList = Array.isArray(cronJobs) ? cronJobs : (cronJobs as any)?.jobs ?? []
+              return cronList.filter((job: CronJob) => job.enabled).length
+            })()}</div>
+            <div>LAST ACTIVITY: {(() => {
+              const sessionsArray = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions || []
+              if (sessionsArray.length === 0) return 'unknown'
+              const latestActivity = Math.max(...sessionsArray.map((s: Session) => new Date(s.lastActivity).getTime()))
+              return formatDistanceToNow(latestActivity) + ' ago'
+            })()}</div>
           </div>
         </div>
       </div>
