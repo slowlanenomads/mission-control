@@ -170,3 +170,22 @@ export function authenticate(username: string, password: string): { id: string; 
   if (!verifyPassword(password, user.passwordHash, user.salt)) return null
   return { id: user.id, username: user.username }
 }
+
+export function changePassword(userId: string, newPassword: string): void {
+  // Validate password policy
+  const missing = []
+  if (newPassword.length < 12) missing.push('at least 12 characters')
+  if (!/[A-Z]/.test(newPassword)) missing.push('at least one uppercase letter')
+  if (!/[a-z]/.test(newPassword)) missing.push('at least one lowercase letter')
+  if (!/[0-9]/.test(newPassword)) missing.push('at least one digit')
+  if (missing.length > 0) throw new Error(`Password must have ${missing.join(', ')}`)
+
+  const users = readUsers()
+  const user = users.find(u => u.id === userId)
+  if (!user) throw new Error('User not found')
+
+  const { hash, salt } = hashPassword(newPassword)
+  user.passwordHash = hash
+  user.salt = salt
+  writeUsers(users)
+}

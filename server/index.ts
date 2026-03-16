@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import {
   createToken, verifyToken, hasUsers, createUser, authenticate,
   checkRateLimit, recordFailedAttempt, clearAttempts,
+  changePassword,
 } from './auth'
 
 const app = express()
@@ -369,35 +370,12 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
       return res.status(401).json({ error: 'Current password is incorrect' })
     }
     
-    // Validate new password (same rules as createUser)
-    if (newPassword.length < 12) {
-      return res.status(400).json({ error: 'Password must be at least 12 characters' })
-    }
-    if (!/[A-Z]/.test(newPassword)) {
-      return res.status(400).json({ error: 'Password must contain an uppercase letter' })
-    }
-    if (!/[a-z]/.test(newPassword)) {
-      return res.status(400).json({ error: 'Password must contain a lowercase letter' })
-    }
-    if (!/\d/.test(newPassword)) {
-      return res.status(400).json({ error: 'Password must contain a digit' })
-    }
-    
-    // Update password
-    const usersFile = path.join(DATA_DIR, 'users.json')
-    const usersData = JSON.parse(fs.readFileSync(usersFile, 'utf-8'))
-    const targetUser = usersData.users.find((u: any) => u.id === user.id)
-    if (targetUser) {
-      targetUser.passwordHash = crypto.createHash('sha256').update(newPassword + targetUser.salt).digest('hex')
-      fs.writeFileSync(usersFile, JSON.stringify(usersData, null, 2))
-      console.log(`🔐 Password changed for user: ${user.username}`)
-      res.json({ success: true })
-    } else {
-      res.status(404).json({ error: 'User not found' })
-    }
+    changePassword(user.userId, newPassword)
+    console.log(`🔐 Password changed for user: ${user.username}`)
+    res.json({ success: true })
   } catch (e: any) {
     console.error('Password change error:', e.message)
-    res.status(500).json({ error: e.message })
+    res.status(400).json({ error: e.message })
   }
 })
 
