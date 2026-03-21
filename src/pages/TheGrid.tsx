@@ -28,6 +28,8 @@ interface AgentNode {
   pulsePhase: number
   messageCount: number
   lastActivity: number
+  status?: string  // For sub-agents: 'running', 'done', 'error', 'idle'
+  model?: string   // For sub-agents: model name
 }
 
 interface Particle {
@@ -45,6 +47,7 @@ interface DataPacket {
   progress: number // 0-1
   speed: number
   color: string
+  type: 'spawn' | 'response' | 'error' // packet type
 }
 
 interface CircuitTrace {
@@ -116,6 +119,18 @@ function formatUptime(seconds: number): string {
   return `${days}d ${hours}h ${mins}m`
 }
 
+function shortenModel(model: string): string {
+  if (model.includes('gpt-5.4')) return 'GPT-5.4'
+  if (model.includes('gpt-5.3')) return 'GPT-5.3'
+  if (model.includes('claude-opus')) return 'Opus'
+  if (model.includes('claude-sonnet-4')) return 'Sonnet 4.6'
+  if (model.includes('gemini-2.5-pro')) return 'Gemini 2.5'
+  if (model.includes('gemini-2.5-flash')) return 'Flash 2.5'
+  // Fallback: extract last meaningful segment
+  const parts = model.split('/')
+  return parts[parts.length - 1].split('-').slice(0, 2).join(' ')
+}
+
 function formatCountdown(nextRun: string): string {
   try {
     const diff = new Date(nextRun).getTime() - Date.now()
@@ -131,13 +146,22 @@ function formatCountdown(nextRun: string): string {
   }
 }
 
-function getNodeColor(kind: string): string {
-  switch (kind) {
-    case 'main': return COLORS.green
-    case 'subagent': return COLORS.cyan
-    case 'cron': return COLORS.amber
-    default: return COLORS.green
+function getNodeColor(kind: string, status?: string): string {
+  if (kind === 'main') return COLORS.green
+  if (kind === 'cron') return COLORS.amber
+  
+  // Sub-agent status-based colors
+  if (kind === 'subagent') {
+    switch (status) {
+      case 'running': return COLORS.amber
+      case 'done': return COLORS.green
+      case 'error': 
+      case 'timeout': return COLORS.red
+      default: return '#333333' // dim grey for idle/old
+    }
   }
+  
+  return COLORS.green
 }
 
 function createParticles(count: number, width: number, height: number): Particle[] {
@@ -146,7 +170,7 @@ function createParticles(count: number, width: number, height: number): Particle
     y: Math.random() * height,
     vx: (Math.random() - 0.5) * 0.5,
     vy: (Math.random() - 0.5) * 0.5,
-    alpha: 0.3 + Math.random() * 0.4,
+    alpha: (0.3 + Math.random() * 0.4) * 0.2, // Reduced to 20%
     size: 1 + Math.random() * 2,
   }))
 }
@@ -232,7 +256,7 @@ function drawTrace(ctx: CanvasRenderingContext2D, trace: CircuitTrace) {
 }
 
 function drawNode(ctx: CanvasRenderingContext2D, node: AgentNode, time: number) {
-  const color = getNodeColor(node.kind)
+  const color = getNodeColor(node.kind, node.status)
   
   // Main node background
   ctx.fillStyle = color
@@ -241,9 +265,9 @@ function drawNode(ctx: CanvasRenderingContext2D, node: AgentNode, time: number) 
   ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
   ctx.fill()
   
-  // Pulsing ring for main node
-  if (node.kind === 'main') {
-    const pulseRadius = node.radius + Math.sin(node.pulsePhase) * 10
+  // Pulsing ring for main node or running sub-agents
+  if (node.kind === 'main' || (node.kind === 'subagent' && node.status === 'running')) {
+    const pulseRadius = node.radius + Math.sin(node.pulsePhase) * (node.kind === 'main' ? 10 : 5)
     ctx.strokeStyle = color
     ctx.lineWidth = 2
     ctx.globalAlpha = node.alpha * (0.5 + Math.sin(node.pulsePhase) * 0.3)
@@ -251,12 +275,14 @@ function drawNode(ctx: CanvasRenderingContext2D, node: AgentNode, time: number) 
     ctx.arc(node.x, node.y, pulseRadius, 0, Math.PI * 2)
     ctx.stroke()
     
-    // Outer concentric rings
-    for (let i = 1; i <= 2; i++) {
-      ctx.globalAlpha = node.alpha * (0.3 - i * 0.1) * (0.5 + Math.sin(node.pulsePhase + i) * 0.3)
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, pulseRadius + i * 15, 0, Math.PI * 2)
-      ctx.stroke()
+    // Outer concentric rings for main node
+    if (node.kind === 'main') {
+      for (let i = 1; i <= 2; i++) {
+        ctx.globalAlpha = node.alpha * (0.3 - i * 0.1) * (0.5 + Math.sin(node.pulsePhase + i) * 0.3)
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, pulseRadius + i * 15, 0, Math.PI * 2)
+        ctx.stroke()
+      }
     }
   }
   
@@ -279,9 +305,43 @@ function drawNode(ctx: CanvasRenderingContext2D, node: AgentNode, time: number) 
     ctx.font = '10px monospace'
     ctx.fillText('OPUS 4.6', node.x, node.y + 8)
   } else {
+    // Sub-agent label
     ctx.fillText(node.label, node.x, node.y + node.radius + 15)
+    
+    // Sub-agent model name
+    if (node.model) {
+      ctx.font = '9px monospace'
+      ctx.fillText(shortenModel(node.model), node.x, node.y + node.radius + 28)
+    }
   }
   
+  ctx.globalAlpha = 1
+}
+
+function drawConnectionLine(ctx: CanvasRenderingContext2D, fromNode: AgentNode, toNode: AgentNode) {
+  const opacity = toNode.status === 'running' ? 0.4 : 
+                 toNode.status === 'done' ? Math.max(0.1, 0.4 - (Date.now() - toNode.lastActivity) / 10000) : 
+                 toNode.status === 'error' ? 0.6 : 0.1
+  
+  const color = toNode.status === 'error' ? COLORS.red : COLORS.cyan
+  const isDashed = toNode.status !== 'running'
+  
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1
+  ctx.globalAlpha = opacity
+  
+  if (isDashed) {
+    ctx.setLineDash([5, 5])
+  } else {
+    ctx.setLineDash([])
+  }
+  
+  ctx.beginPath()
+  ctx.moveTo(fromNode.x, fromNode.y)
+  ctx.lineTo(toNode.x, toNode.y)
+  ctx.stroke()
+  
+  ctx.setLineDash([]) // Reset dash pattern
   ctx.globalAlpha = 1
 }
 
@@ -294,22 +354,33 @@ function drawPacket(ctx: CanvasRenderingContext2D, packet: DataPacket, nodes: Ag
   const x = fromNode.x + (toNode.x - fromNode.x) * packet.progress
   const y = fromNode.y + (toNode.y - fromNode.y) * packet.progress
   
+  // Draw glowing dot
   ctx.fillStyle = packet.color
   ctx.shadowColor = packet.color
   ctx.shadowBlur = 8
-  ctx.globalAlpha = 0.8
+  ctx.globalAlpha = 0.9
   
   ctx.beginPath()
-  ctx.arc(x, y, 3, 0, Math.PI * 2)
+  ctx.arc(x, y, 4, 0, Math.PI * 2)
   ctx.fill()
+  
+  // Draw trail
+  const trailLength = 3
+  for (let i = 1; i <= trailLength; i++) {
+    const trailProgress = Math.max(0, packet.progress - i * 0.05)
+    const trailX = fromNode.x + (toNode.x - fromNode.x) * trailProgress
+    const trailY = fromNode.y + (toNode.y - fromNode.y) * trailProgress
+    
+    ctx.globalAlpha = 0.9 * (1 - i / trailLength) * 0.5
+    ctx.beginPath()
+    ctx.arc(trailX, trailY, 3 * (1 - i / trailLength), 0, Math.PI * 2)
+    ctx.fill()
+  }
   
   ctx.shadowBlur = 0
   ctx.globalAlpha = 1
   
   packet.progress += packet.speed
-  if (packet.progress >= 1) {
-    packet.progress = 0
-  }
 }
 
 function drawPulseRing(ctx: CanvasRenderingContext2D, pulse: PulseRing) {
@@ -385,6 +456,7 @@ export default function TheGrid() {
     pulses: [] as PulseRing[],
     time: 0,
     lastMessageCounts: new Map<string, number>(),
+    prevSubagentStates: new Map<string, string>(),
   })
   
   // Initialize canvas and particles
@@ -411,7 +483,7 @@ export default function TheGrid() {
       
       // Initialize particles and traces
       const state = stateRef.current
-      state.particles = createParticles(80, width, height)
+      state.particles = createParticles(16, width, height) // Reduced from 80 to 16 (20%)
       state.traces = createCircuitTraces(12, width, height)
     }
     
@@ -476,6 +548,7 @@ export default function TheGrid() {
     
     const state = stateRef.current
     const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
+    const subagentList: SubagentRun[] = Array.isArray(subagentRuns) ? subagentRuns : []
     const centerX = dimensions.width / 2
     const centerY = dimensions.height / 2
     
@@ -495,29 +568,32 @@ export default function TheGrid() {
       lastActivity: Date.now(),
     }
     
-    // Create sub-agent nodes
+    // Create sub-agent nodes from subagentRuns data
     const subagentNodes: AgentNode[] = []
-    const activeSubagents = sessionList.filter(s => s.kind === 'subagent' && s.status === 'active')
-    
-    activeSubagents.forEach((session, index) => {
-      const angle = (index / activeSubagents.length) * Math.PI * 2
+    subagentList.forEach((run, index) => {
+      const angle = (index / Math.max(subagentList.length, 1)) * Math.PI * 2
       const distance = 150
       const targetX = centerX + Math.cos(angle) * distance
       const targetY = centerY + Math.sin(angle) * distance
       
+      // Find existing node to preserve position
+      const existingNode = state.nodes.find(n => n.id === run.id)
+      
       subagentNodes.push({
-        id: session.sessionKey,
-        label: session.sessionKey.slice(-8),
+        id: run.id,
+        label: run.label || run.id.slice(-8),
         kind: 'subagent',
-        x: targetX,
-        y: targetY,
+        x: existingNode ? existingNode.x : targetX,
+        y: existingNode ? existingNode.y : targetY,
         targetX: targetX,
         targetY: targetY,
         radius: 20,
         alpha: 1,
-        pulsePhase: 0,
-        messageCount: session.messageCount || 0,
-        lastActivity: new Date(session.lastActivity).getTime(),
+        pulsePhase: existingNode ? existingNode.pulsePhase : 0,
+        messageCount: 0,
+        lastActivity: new Date(run.spawned).getTime(),
+        status: run.status,
+        model: run.model,
       })
     })
     
@@ -549,6 +625,50 @@ export default function TheGrid() {
       })
     }
     
+    // Handle state transitions and create appropriate data packets
+    const newPackets: DataPacket[] = []
+    subagentList.forEach(run => {
+      const prevStatus = state.prevSubagentStates.get(run.id)
+      
+      if (!prevStatus && run.status === 'running') {
+        // NEW: spawn packet (outbound)
+        newPackets.push({
+          fromNode: 'main',
+          toNode: run.id,
+          progress: 0,
+          speed: 0.025,
+          color: '#00d4ff', // blue
+          type: 'spawn',
+        })
+      }
+      
+      if (prevStatus === 'running' && run.status === 'done') {
+        // COMPLETED: response packet (inbound)
+        newPackets.push({
+          fromNode: run.id,
+          toNode: 'main',
+          progress: 0,
+          speed: 0.025,
+          color: COLORS.green,
+          type: 'response',
+        })
+      }
+      
+      if (prevStatus === 'running' && (run.status === 'error' || run.status === 'timeout')) {
+        // ERROR: error packet (inbound)
+        newPackets.push({
+          fromNode: run.id,
+          toNode: 'main',
+          progress: 0,
+          speed: 0.025,
+          color: COLORS.red,
+          type: 'error',
+        })
+      }
+      
+      state.prevSubagentStates.set(run.id, run.status)
+    })
+    
     const newNodes = [mainNode, ...subagentNodes, ...cronNodes]
     
     // Check for new messages and create pulses
@@ -567,24 +687,10 @@ export default function TheGrid() {
       }
     })
     
-    // Create data packets between main and sub-agents
-    const newPackets: DataPacket[] = []
-    subagentNodes.forEach(subagent => {
-      if (Math.random() < 0.1) { // 10% chance per frame
-        newPackets.push({
-          fromNode: 'main',
-          toNode: subagent.id,
-          progress: 0,
-          speed: 0.02,
-          color: COLORS.cyan,
-        })
-      }
-    })
-    
     state.nodes = newNodes
     state.packets = [...state.packets.filter(p => p.progress < 1), ...newPackets]
     
-  }, [sessions, cronJobs, dimensions])
+  }, [sessions, subagentRuns, cronJobs, dimensions])
 
   // Update real token and cost data
   useEffect(() => {
@@ -621,13 +727,21 @@ export default function TheGrid() {
       // 2. Circuit traces
       state.traces.forEach(trace => drawTrace(ctx, trace))
       
-      // 3. Connection lines + data packets
+      // 3. Connection lines
+      const mainNode = state.nodes.find(n => n.kind === 'main')
+      if (mainNode) {
+        state.nodes.filter(n => n.kind === 'subagent').forEach(subNode => {
+          drawConnectionLine(ctx, mainNode, subNode)
+        })
+      }
+      
+      // 4. Data packets
       state.packets = state.packets.filter(packet => {
         drawPacket(ctx, packet, state.nodes)
         return packet.progress < 1
       })
       
-      // 4. Pulse rings
+      // 5. Pulse rings
       state.pulses = state.pulses.filter(pulse => {
         pulse.radius += 2
         pulse.alpha *= 0.97
@@ -638,7 +752,7 @@ export default function TheGrid() {
         return false
       })
       
-      // 5. Particles
+      // 6. Particles (reduced intensity)
       state.particles.forEach(particle => {
         particle.x += particle.vx
         particle.y += particle.vy
@@ -652,7 +766,7 @@ export default function TheGrid() {
         drawParticle(ctx, particle)
       })
       
-      // 6. Agent nodes
+      // 7. Agent nodes
       state.nodes.forEach(node => {
         // Ease toward target position
         node.x += (node.targetX - node.x) * 0.05
@@ -662,7 +776,7 @@ export default function TheGrid() {
         drawNode(ctx, node, state.time)
       })
       
-      // 7. Occasional scan line
+      // 8. Occasional scan line
       if (Math.random() < 0.002) { // 0.2% chance per frame
         drawScanline(ctx, width, height, state.time)
       }
