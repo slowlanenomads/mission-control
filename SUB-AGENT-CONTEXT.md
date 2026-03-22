@@ -75,6 +75,12 @@ MC proxies most requests to the OpenClaw Gateway at `localhost:18789`. Key endpo
   - Red: `#ff3333` (error)
   - Dark green grid: `#0d1f0d`
 
+## Current Known Issue
+- TheGrid currently shows sub-agent nodes, status colors, and model names, but the **live conversation flow is not visually accurate**.
+- Problem: when the main agent is waiting on sub-agent responses, the visualization does not clearly show inbound communication back to the main agent.
+- Current symptom: particles / stars radiate outward, but the **return path** (sub-agent → main agent) is not clearly visible during real work.
+- Goal: make the communication direction and waiting state obvious at a glance.
+
 ## TheGrid (Main Visualization)
 The centerpiece of MC. Canvas-rendered network graph showing:
 - **Main agent node** in center (largest, green)

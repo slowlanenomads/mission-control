@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express'
 import cors from 'cors'
 import path from 'path'
 import fs from 'fs'
+import os from 'os'
 import crypto from 'crypto'
 import {
   createToken, verifyToken, hasUsers, createUser, authenticate,
@@ -1247,6 +1248,46 @@ app.get('/api/cost/summary', (req, res) => {
     res.json({ daily, totalCost: Math.round(totalCost * 100) / 100, totalInput, totalOutput })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/cost/openrouter', async (req, res) => {
+  try {
+    // Try to get OpenRouter API key from environment or openclaw config
+    let orKey = process.env.OPENROUTER_API_KEY || ''
+    
+    if (!orKey) {
+      try {
+        const openclawConfigPath = path.join(os.homedir(), '.openclaw/openclaw.json')
+        const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf-8'))
+        orKey = openclawConfig?.env?.OPENROUTER_API_KEY || ''
+      } catch (e) {
+        // Ignore config read errors
+      }
+    }
+    
+    if (!orKey) {
+      return res.json({ error: 'No OpenRouter API key configured' })
+    }
+    
+    const [keyRes, creditsRes] = await Promise.all([
+      fetch('https://openrouter.ai/api/v1/auth/key', {
+        headers: { 'Authorization': `Bearer ${orKey}` }
+      }),
+      fetch('https://openrouter.ai/api/v1/credits', {
+        headers: { 'Authorization': `Bearer ${orKey}` }
+      })
+    ])
+    
+    const keyData = await keyRes.json()
+    const creditsData = await creditsRes.json()
+    
+    res.json({
+      key: keyData.data,
+      credits: creditsData.data
+    })
+  } catch (e: any) {
+    res.json({ error: String(e) })
   }
 })
 

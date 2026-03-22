@@ -52,6 +52,7 @@ const MODEL_COLORS = [
 
 export default function CostTracker() {
   const { data: costSummary, loading } = useApi<CostSummaryData>('/api/cost/summary', { interval: 60000 })
+  const { data: orData } = useApi<any>('/api/cost/openrouter', { interval: 60000 })
 
   if (loading && !costSummary) {
     return (
@@ -83,6 +84,88 @@ export default function CostTracker() {
         <DollarSign className="w-6 h-6 text-yellow-400" />
         <h1 className="text-2xl font-bold text-gray-100">Cost Tracker</h1>
       </div>
+
+      {/* OpenRouter Credits Widget */}
+      {orData && !orData.error && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-gray-200 mb-4 flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-green-400" />
+            OpenRouter Credits
+          </h2>
+          
+          {orData.credits && orData.key && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-sm text-gray-400 mb-1">Credits Remaining</div>
+                  <div className="text-lg font-semibold text-green-400">
+                    ${(orData.credits.total_credits - orData.credits.total_usage).toFixed(2)} / ${orData.credits.total_credits?.toFixed(2) || '0.00'}
+                  </div>
+                </div>
+                
+                <div>
+                  <div className="text-sm text-gray-400 mb-1">Weekly Limit</div>
+                  <div className="text-lg font-semibold text-cyan-400">
+                    ${orData.key.limit_remaining?.toFixed(2) || '0.00'} remaining
+                  </div>
+                  <div className="text-xs text-gray-500">of ${orData.key.limit?.toFixed(2) || '0.00'}</div>
+                </div>
+                
+                <div>
+                  <div className="text-sm text-gray-400 mb-1">Daily Usage</div>
+                  <div className="text-lg font-semibold text-amber-400">
+                    ${orData.key.usage_daily?.toFixed(2) || '0.00'}
+                  </div>
+                </div>
+                
+                <div>
+                  <div className="text-sm text-gray-400 mb-1">Monthly Usage</div>
+                  <div className="text-lg font-semibold text-purple-400">
+                    ${orData.key.usage_monthly?.toFixed(2) || '0.00'}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Weekly Usage Progress</span>
+                  <span className="text-gray-300">
+                    {((orData.key.usage_weekly / orData.key.limit) * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      orData.key.limit_remaining <= 0 
+                        ? 'bg-red-500' 
+                        : orData.key.limit_remaining < 2
+                        ? 'bg-amber-500'
+                        : 'bg-green-500'
+                    }`}
+                    style={{ 
+                      width: `${Math.min((orData.key.usage_weekly / orData.key.limit) * 100, 100)}%` 
+                    }}
+                  />
+                </div>
+                
+                {orData.key.limit_remaining <= 0 && (
+                  <div className="flex items-center gap-2 text-red-400 text-sm">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    Weekly limit exceeded
+                  </div>
+                )}
+                
+                {orData.key.limit_remaining > 0 && orData.key.limit_remaining < 2 && (
+                  <div className="flex items-center gap-2 text-amber-400 text-sm">
+                    <div className="w-2 h-2 rounded-full bg-amber-500" />
+                    Weekly limit almost reached
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
