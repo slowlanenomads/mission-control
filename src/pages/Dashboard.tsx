@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Activity, MessageSquare, Clock, Users, Zap, Cpu, DollarSign, TrendingUp, RefreshCw, RotateCw, FileText, Database } from 'lucide-react'
+import { Activity, MessageSquare, Clock, Users, Zap, Cpu, DollarSign, TrendingUp, RefreshCw, RotateCw, FileText, Database, ChevronDown, ChevronUp, Info } from 'lucide-react'
 import StatCard from '../components/StatCard'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -25,6 +25,24 @@ interface SessionStatus {
   cost?: number
   dailyCost?: number
   sessionKey?: string
+}
+
+interface LiveSessionStatus {
+  raw?: string
+  model?: string
+  version?: string
+  commit?: string
+  authProfile?: string
+  tokens?: { input: number; output: number; total: number }
+  cache?: { hitPercent: number; cachedTokens: number; newTokens: number }
+  context?: { used: number; max: number; percent: number; compactions: number }
+  usage?: { windowPercentLeft: number; windowTimeLeft: string; weekPercentLeft: number; weekTimeLeft: string }
+  runtime?: { mode: string; thinking: string; elevated: boolean }
+  queue?: { name: string; depth: number }
+  sessionKey?: string
+  updated?: string
+  parseWarnings?: string[]
+  parseError?: string
 }
 
 function kindColor(kind: string): string {
@@ -55,11 +73,13 @@ function formatTokens(n: number): string {
 export default function Dashboard() {
   const { data: sessions, loading: sessionsLoading } = useApi<Session[]>('/api/sessions', { interval: 15000 })
   const { data: sessionStatus, loading: statusLoading } = useApi<SessionStatus>('/api/session-status', { interval: 30000 })
+  const { data: liveStatus, loading: liveLoading } = useApi<LiveSessionStatus>('/api/session-status-live', { interval: 30000 })
   const { data: cronData, loading: cronLoading } = useApi<any>('/api/cron', { interval: 60000 })
   const { toast } = useToast()
   const syncAction = useAction()
   const restartAction = useAction()
   const [restartConfirm, setRestartConfirm] = useState(false)
+  const [showRawStatus, setShowRawStatus] = useState(false)
 
   const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
   const activeSessions = sessionList.filter(s => s.status === 'active').length
@@ -187,84 +207,212 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Usage & Cost */}
+        {/* Live Session Status */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl">
-          <div className="px-6 py-4 border-b border-gray-800 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-cyan-400" />
-            <h3 className="font-semibold text-sm">Usage & Cost</h3>
+          <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-cyan-400" />
+              <h3 className="font-semibold text-sm">Live Session Status</h3>
+            </div>
+            {liveStatus?.updated && <span className="text-[11px] text-gray-400 font-mono bg-gray-800/70 px-2 py-0.5 rounded">updated {liveStatus.updated}</span>}
           </div>
-          <div className="p-6 space-y-5">
-            {statusLoading && !sessionStatus ? (
-              <div className="space-y-4">
-                {[...Array(4)].map((_, i) => (
-                  <div key={i}><div className="h-3 w-20 bg-gray-800 rounded animate-pulse mb-2" /><div className="h-6 w-24 bg-gray-800 rounded animate-pulse" /></div>
+          <div className="p-5 space-y-4">
+            {liveLoading && !liveStatus ? (
+              <div className="space-y-3">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i}><div className="h-3 w-20 bg-gray-800 rounded animate-pulse mb-1" /><div className="h-5 w-32 bg-gray-800 rounded animate-pulse" /></div>
                 ))}
               </div>
-            ) : sessionStatus ? (
+            ) : liveStatus ? (
               <>
+                {/* Model */}
                 <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Model</p>
-                  <p className="font-mono text-sm text-gray-200">{sessionStatus.model || '\u2014'}</p>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Model</p>
+                  <p className="font-mono text-sm text-gray-200 truncate">{liveStatus.model || '\u2014'}</p>
+                  {liveStatus.version && <p className="text-[10px] text-gray-600 font-mono mt-0.5">OpenClaw {liveStatus.version}{liveStatus.commit ? ` (${liveStatus.commit})` : ''}</p>}
                 </div>
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-gray-500 uppercase tracking-wider">Input Tokens</p>
-                    <span className="text-xs font-mono text-gray-400">{sessionStatus.inputTokens?.toLocaleString() ?? '0'}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl font-bold text-blue-400">{formatTokens(sessionStatus.inputTokens || 0)}</span>
-                    <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all" style={{ width: `${Math.min(((sessionStatus.inputTokens || 0) / 200000) * 100, 100)}%` }} />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-gray-500 uppercase tracking-wider">Output Tokens</p>
-                    <span className="text-xs font-mono text-gray-400">{sessionStatus.outputTokens?.toLocaleString() ?? '0'}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl font-bold text-green-400">{formatTokens(sessionStatus.outputTokens || 0)}</span>
-                    <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-green-600 to-green-400 rounded-full transition-all" style={{ width: `${Math.min(((sessionStatus.outputTokens || 0) / 32000) * 100, 100)}%` }} />
-                    </div>
-                  </div>
-                </div>
-                {sessionStatus.cost != null && (
-                  <div className="border-t border-gray-800 pt-4 space-y-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <DollarSign className="w-3.5 h-3.5 text-yellow-400" />
-                      <p className="text-xs text-gray-500 uppercase tracking-wider">Cost Breakdown</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-gray-800/50 rounded-lg p-3">
-                        <p className="text-[10px] text-gray-500 uppercase mb-1">Session Cost</p>
-                        <p className="text-lg font-bold text-yellow-400">${sessionStatus.cost.toFixed(4)}</p>
+
+                {/* Tokens */}
+                {liveStatus.tokens && (
+                  <div>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Tokens</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                        <p className="text-[9px] text-gray-500 uppercase mb-0.5">In</p>
+                        <p className="text-sm font-bold text-blue-400">{formatTokens(liveStatus.tokens.input)}</p>
                       </div>
-                      {costPer1k != null && (
-                        <div className="bg-gray-800/50 rounded-lg p-3">
-                          <p className="text-[10px] text-gray-500 uppercase mb-1">Per 1K Tokens</p>
-                          <p className="text-lg font-bold text-orange-400">${costPer1k.toFixed(4)}</p>
-                        </div>
-                      )}
-                    </div>
-                    {sessionStatus.dailyCost != null && (
-                      <div className="bg-gray-800/50 rounded-lg p-3 flex items-center justify-between">
-                        <div>
-                          <p className="text-[10px] text-gray-500 uppercase mb-1">Est. Daily Cost</p>
-                          <p className="text-lg font-bold text-red-400">${sessionStatus.dailyCost.toFixed(2)}</p>
-                        </div>
-                        <TrendingUp className="w-5 h-5 text-red-400/50" />
+                      <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                        <p className="text-[9px] text-gray-500 uppercase mb-0.5">Out</p>
+                        <p className="text-sm font-bold text-green-400">{formatTokens(liveStatus.tokens.output)}</p>
                       </div>
+                      <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                        <p className="text-[9px] text-gray-500 uppercase mb-0.5">Total</p>
+                        <p className="text-sm font-bold text-gray-300">{formatTokens(liveStatus.tokens.total)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Cache */}
+                {liveStatus.cache && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider">Cache</p>
+                        <span title="How much of the prompt/context was served from cache instead of being newly processed.">
+                          <Info className="w-3 h-3 text-gray-600 hover:text-gray-400" />
+                        </span>
+                      </div>
+                      <span className={`text-xs font-bold ${
+                        liveStatus.cache.hitPercent >= 80 ? 'text-green-400' :
+                        liveStatus.cache.hitPercent >= 40 ? 'text-yellow-400' : 'text-gray-400'
+                      }`}>{liveStatus.cache.hitPercent}% hit</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          liveStatus.cache.hitPercent >= 80 ? 'bg-green-500' :
+                          liveStatus.cache.hitPercent >= 40 ? 'bg-yellow-500' : 'bg-gray-500'
+                        }`}
+                        style={{ width: `${liveStatus.cache.hitPercent}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[9px] text-gray-600">{formatTokens(liveStatus.cache.cachedTokens)} cached</span>
+                      <span className="text-[9px] text-gray-600">{formatTokens(liveStatus.cache.newTokens)} new</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Context */}
+                {liveStatus.context && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider">Context</p>
+                        <span title="How full the active context window is. Higher percentages mean you're closer to compaction or truncation pressure.">
+                          <Info className="w-3 h-3 text-gray-600 hover:text-gray-400" />
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {liveStatus.context.compactions > 0 && (
+                          <span
+                            className="text-[9px] bg-orange-900/40 text-orange-400 px-1.5 py-0.5 rounded"
+                            title="Number of times the conversation context has been compacted to stay within the model window."
+                          >
+                            {liveStatus.context.compactions} compaction{liveStatus.context.compactions !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                        <span className={`text-xs font-bold ${
+                          liveStatus.context.percent >= 75 ? 'text-red-400' :
+                          liveStatus.context.percent >= 55 ? 'text-yellow-400' : 'text-cyan-400'
+                        }`}>{liveStatus.context.percent}%</span>
+                      </div>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          liveStatus.context.percent >= 75 ? 'bg-red-500' :
+                          liveStatus.context.percent >= 55 ? 'bg-yellow-500' : 'bg-cyan-500'
+                        }`}
+                        style={{ width: `${liveStatus.context.percent}%` }}
+                      />
+                    </div>
+                    <p className="text-[9px] text-gray-600 mt-1">{formatTokens(liveStatus.context.used)} / {formatTokens(liveStatus.context.max)}</p>
+                  </div>
+                )}
+
+                {/* Usage remaining */}
+                {liveStatus.usage && (
+                  <div className="border-t border-gray-800/50 pt-3">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Remaining</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-gray-800/50 rounded-lg p-2">
+                        <p className="text-[9px] text-gray-500 uppercase mb-0.5">Session</p>
+                        <p className={`text-sm font-bold ${
+                          liveStatus.usage.windowPercentLeft <= 20 ? 'text-red-400' :
+                          liveStatus.usage.windowPercentLeft <= 50 ? 'text-yellow-400' : 'text-green-400'
+                        }`}>{liveStatus.usage.windowPercentLeft}%</p>
+                        <p className="text-[9px] text-gray-500 font-mono">{liveStatus.usage.windowTimeLeft}</p>
+                      </div>
+                      <div className="bg-gray-800/50 rounded-lg p-2">
+                        <p className="text-[9px] text-gray-500 uppercase mb-0.5">Week</p>
+                        <p className={`text-sm font-bold ${
+                          liveStatus.usage.weekPercentLeft <= 20 ? 'text-red-400' :
+                          liveStatus.usage.weekPercentLeft <= 50 ? 'text-yellow-400' : 'text-green-400'
+                        }`}>{liveStatus.usage.weekPercentLeft}%</p>
+                        <p className="text-[9px] text-gray-500 font-mono">{liveStatus.usage.weekTimeLeft}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Runtime + Queue */}
+                {(liveStatus.runtime || liveStatus.queue) && (
+                  <div className="border-t border-gray-800/50 pt-3 flex flex-wrap gap-2">
+                    {liveStatus.runtime && (
+                      <>
+                        <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">{liveStatus.runtime.mode}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${
+                          liveStatus.runtime.thinking === 'off' ? 'bg-gray-800 text-gray-500' : 'bg-purple-900/40 text-purple-400'
+                        }`}>think: {liveStatus.runtime.thinking}</span>
+                        {liveStatus.runtime.elevated && (
+                          <span className="text-[10px] bg-yellow-900/30 text-yellow-500 px-2 py-0.5 rounded font-mono">elevated</span>
+                        )}
+                      </>
+                    )}
+                    {liveStatus.queue && (
+                      <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">
+                        queue: {liveStatus.queue.name} ({liveStatus.queue.depth})
+                      </span>
                     )}
                   </div>
                 )}
-                <div className="border-t border-gray-800 pt-4">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-gray-500">Total Tokens</span>
-                    <span className="font-mono text-gray-300 font-medium">{totalTokens.toLocaleString()}</span>
+
+                {/* Legacy cost section if available */}
+                {sessionStatus?.cost != null && (
+                  <div className="border-t border-gray-800/50 pt-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <DollarSign className="w-3 h-3 text-yellow-400" />
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">Cost</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-gray-800/50 rounded-lg p-2">
+                        <p className="text-[9px] text-gray-500 uppercase mb-0.5">Session</p>
+                        <p className="text-sm font-bold text-yellow-400">${sessionStatus.cost.toFixed(4)}</p>
+                      </div>
+                      {costPer1k != null && (
+                        <div className="bg-gray-800/50 rounded-lg p-2">
+                          <p className="text-[9px] text-gray-500 uppercase mb-0.5">Per 1K</p>
+                          <p className="text-sm font-bold text-orange-400">${costPer1k.toFixed(4)}</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Parse warnings if any */}
+                {liveStatus.parseWarnings && liveStatus.parseWarnings.length > 0 && (
+                  <p className="text-[9px] text-gray-600">⚠ partial parse: {liveStatus.parseWarnings.join(', ')}</p>
+                )}
+
+                {/* Raw status debug */}
+                {liveStatus.raw && (
+                  <div className="border-t border-gray-800/50 pt-3">
+                    <button
+                      onClick={() => setShowRawStatus(v => !v)}
+                      className="w-full flex items-center justify-between text-[10px] uppercase tracking-wider text-gray-500 hover:text-gray-300 transition-colors"
+                    >
+                      <span>Debug / Raw Status</span>
+                      {showRawStatus ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                    {showRawStatus && (
+                      <pre className="mt-2 text-[10px] leading-relaxed font-mono text-gray-400 bg-gray-950 border border-gray-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words">
+                        {liveStatus.raw}
+                      </pre>
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-center text-gray-500 text-sm py-8">No session data available</div>

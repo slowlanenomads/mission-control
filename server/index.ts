@@ -622,7 +622,162 @@ app.post('/api/actions/restart-gateway', async (_req, res) => {
   }
 })
 
+// ========= Session Status Live Parser =========
+
+function parseCompactNumber(str: string): number {
+  if (!str) return 0
+  const s = str.trim().toLowerCase()
+  if (s.endsWith('k')) return Math.round(parseFloat(s) * 1000)
+  if (s.endsWith('m')) return Math.round(parseFloat(s) * 1_000_000)
+  return parseInt(s.replace(/[^0-9]/g, '')) || 0
+}
+
+function parseSessionStatusText(raw: string): Record<string, any> {
+  const result: Record<string, any> = { raw }
+  const warnings: string[] = []
+
+  try {
+    // Model line: 🧠 Model: openai-codex/gpt-5.4 · 🔑 oauth (openai-codex:ryansanders07@gmail.com)
+    const modelMatch = raw.match(/Model:\s*([^\s·]+)/)
+    if (modelMatch) result.model = modelMatch[1].trim()
+    else warnings.push('model')
+
+    // Auth profile
+    const authMatch = raw.match(/🔑\s*\w+\s*\(([^)]+)\)/)
+    if (authMatch) result.authProfile = authMatch[1].trim()
+
+    // Version line: 🦞 OpenClaw 2026.4.1 (da64a97)
+    const versionMatch = raw.match(/OpenClaw\s+([\d.]+(?:\.\d+)*)(?:\s+\(([^)]+)\))?/)
+    if (versionMatch) {
+      result.version = versionMatch[1]
+      if (versionMatch[2]) result.commit = versionMatch[2]
+    }
+
+    // Tokens: 🧮 Tokens: 131k in / 685 out
+    const tokensMatch = raw.match(/Tokens:\s*([\d.]+[km]?)\s*in\s*\/\s*([\d.]+[km]?)\s*out/i)
+    if (tokensMatch) {
+      result.tokens = {
+        input: parseCompactNumber(tokensMatch[1]),
+        output: parseCompactNumber(tokensMatch[2]),
+        total: parseCompactNumber(tokensMatch[1]) + parseCompactNumber(tokensMatch[2]),
+      }
+    } else warnings.push('tokens')
+
+    // Cache: 🗄️ Cache: 16% hit · 25k cached, 0 new
+    const cacheMatch = raw.match(/Cache:\s*(\d+)%\s*hit\s*·\s*([\d.]+[km]?)\s*cached,?\s*([\d.]+[km]?)\s*new/i)
+    if (cacheMatch) {
+      result.cache = {
+        hitPercent: parseInt(cacheMatch[1]),
+        cachedTokens: parseCompactNumber(cacheMatch[2]),
+        newTokens: parseCompactNumber(cacheMatch[3]),
+      }
+    } else warnings.push('cache')
+
+    // Context: 📚 Context: 156k/272k (57%) · 🧹 Compactions: 0
+    const contextMatch = raw.match(/Context:\s*([\d.]+[km]?)\/([\d.]+[km]?)\s*\((\d+)%\)/i)
+    if (contextMatch) {
+      result.context = {
+        used: parseCompactNumber(contextMatch[1]),
+        max: parseCompactNumber(contextMatch[2]),
+        percent: parseInt(contextMatch[3]),
+        compactions: 0,
+      }
+    } else warnings.push('context')
+
+    const compactionsMatch = raw.match(/Compactions:\s*(\d+)/i)
+    if (compactionsMatch && result.context) {
+      result.context.compactions = parseInt(compactionsMatch[1])
+    }
+
+    // Usage: 📊 Usage: 5h 83% left ⏱4h 15m · Week 88% left ⏱6d 18h
+    const usageMatch = raw.match(/Usage:\s*\S+\s*(\d+)%\s*left\s*⏱([\dhdm ]+?)\s*·\s*Week\s*(\d+)%\s*left\s*⏱([\dhdm ]+)/i)
+    if (usageMatch) {
+      result.usage = {
+        windowPercentLeft: parseInt(usageMatch[1]),
+        windowTimeLeft: usageMatch[2].trim(),
+        weekPercentLeft: parseInt(usageMatch[3]),
+        weekTimeLeft: usageMatch[4].trim(),
+      }
+    } else warnings.push('usage')
+
+    // Session: 🧵 Session: agent:main:main • updated just now
+    const sessionMatch = raw.match(/Session:\s*(\S+)\s*•\s*updated\s*(.+)/i)
+    if (sessionMatch) {
+      result.sessionKey = sessionMatch[1].trim()
+      result.updated = sessionMatch[2].trim()
+    }
+
+    // Runtime: ⚙️ Runtime: direct · Think: off · elevated
+    const runtimeMatch = raw.match(/Runtime:\s*(\S+)\s*·\s*Think:\s*(\S+)/i)
+    if (runtimeMatch) {
+      result.runtime = {
+        mode: runtimeMatch[1].trim(),
+        thinking: runtimeMatch[2].trim(),
+        elevated: raw.includes('elevated'),
+      }
+    } else warnings.push('runtime')
+
+    // Queue: 🪢 Queue: collect (depth 0)
+    const queueMatch = raw.match(/Queue:\s*(\S+)\s*\(depth\s*(\d+)\)/i)
+    if (queueMatch) {
+      result.queue = {
+        name: queueMatch[1].trim(),
+        depth: parseInt(queueMatch[2]),
+      }
+    } else warnings.push('queue')
+
+    if (warnings.length > 0) result.parseWarnings = warnings
+  } catch (e: any) {
+    result.parseError = e.message
+  }
+
+  return result
+}
+
 // ========= Gateway Config & Status =========
+
+app.get('/api/session-status-live', async (_req, res) => {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    let raw: globalThis.Response
+    try {
+      raw = await fetch(`${GATEWAY_URL}/tools/invoke`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tool: 'session_status', args: {} }),
+        signal: controller.signal,
+      })
+    } catch (e: any) {
+      clearTimeout(timeout)
+      if (e.name === 'AbortError') throw new Error('Gateway request timed out (10s)')
+      throw e
+    }
+    clearTimeout(timeout)
+    const envelope = await raw.json()
+
+    // Extract the status text from the gateway envelope
+    let statusText = ''
+    if (envelope?.result?.details?.statusText) {
+      statusText = envelope.result.details.statusText
+    } else if (envelope?.result?.content) {
+      const textContent = envelope.result.content.find((c: any) => c.type === 'text')
+      if (textContent?.text) statusText = textContent.text
+    }
+
+    if (!statusText) {
+      return res.status(502).json({ error: 'No status text returned from gateway', raw: envelope })
+    }
+
+    const parsed = parseSessionStatusText(statusText)
+    res.json(parsed)
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
 
 app.get('/api/gateway/config', async (_req, res) => {
   try {
