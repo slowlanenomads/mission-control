@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Server, Activity, HardDrive, RefreshCw, RotateCw, AlertTriangle } from 'lucide-react'
+import { Server, Activity, HardDrive, RefreshCw, RotateCw, AlertTriangle, Cpu, Info } from 'lucide-react'
 import StatCard from '../components/StatCard'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -43,6 +43,26 @@ interface LogData {
   }>
 }
 
+interface LiveSessionStatus {
+  raw?: string
+  model?: string
+  version?: string
+  tokens?: { input: number; output: number; total: number }
+  cache?: { hitPercent: number; cachedTokens: number; newTokens: number }
+  context?: { used: number; max: number; percent: number; compactions: number }
+  usage?: { windowPercentLeft: number; windowTimeLeft: string; weekPercentLeft: number; weekTimeLeft: string }
+  runtime?: { mode: string; thinking: string; elevated: boolean }
+  queue?: { name: string; depth: number }
+  updated?: string
+}
+
+function formatTokens(n?: number): string {
+  if (!n) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return n.toString()
+}
+
 const SERVICES = ['empire-backend', 'empire-backend-dev', 'mission-control', 'nginx', 'openclaw-gateway']
 
 function formatBytes(bytes: number): string {
@@ -77,6 +97,7 @@ function getUtilizationBar(value: number, max: number, color: string = 'blue'): 
 
 export default function SystemHealth() {
   const { data: systemHealth, loading: healthLoading } = useApi<SystemHealthData>('/api/system/health', { interval: 10000 })
+  const { data: liveStatus, loading: liveStatusLoading } = useApi<LiveSessionStatus>('/api/session-status-live', { interval: 30000 })
   const { toast } = useToast()
   const restartAction = useAction()
   const [restartConfirm, setRestartConfirm] = useState<string | null>(null)
@@ -168,6 +189,67 @@ export default function SystemHealth() {
               </div>
             )
           })}
+        </div>
+      </div>
+
+      {/* Live Session Status */}
+      <div>
+        <h2 className="text-lg font-semibold text-gray-200 mb-4">Live Session Status</h2>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          {liveStatusLoading && !liveStatus ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+              {[...Array(4)].map((_, i) => <div key={i} className="h-20 bg-gray-800 rounded-lg" />)}
+            </div>
+          ) : liveStatus ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Model</p>
+                  <p className="text-sm text-gray-200 font-mono break-all">{liveStatus.model || '—'}</p>
+                </div>
+                {liveStatus.updated && <span className="text-[11px] text-gray-400 font-mono bg-gray-800/70 px-2 py-0.5 rounded">updated {liveStatus.updated}</span>}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <p className="text-[10px] text-gray-500 uppercase mb-1">Tokens</p>
+                  <p className="text-lg font-bold text-cyan-400">{formatTokens(liveStatus.tokens?.total)}</p>
+                  <p className="text-[10px] text-gray-500">{formatTokens(liveStatus.tokens?.input)} in / {formatTokens(liveStatus.tokens?.output)} out</p>
+                </div>
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <div className="flex items-center gap-1 mb-1">
+                    <p className="text-[10px] text-gray-500 uppercase">Cache</p>
+                    <span title="Cache hit rate for recent prompt/context reuse."><Info className="w-3 h-3 text-gray-600" /></span>
+                  </div>
+                  <p className="text-lg font-bold text-green-400">{liveStatus.cache?.hitPercent ?? 0}%</p>
+                  <p className="text-[10px] text-gray-500">{formatTokens(liveStatus.cache?.cachedTokens)} cached</p>
+                </div>
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <div className="flex items-center gap-1 mb-1">
+                    <p className="text-[10px] text-gray-500 uppercase">Context</p>
+                    <span title="How full the model context window is."><Info className="w-3 h-3 text-gray-600" /></span>
+                  </div>
+                  <p className={`text-lg font-bold ${
+                    (liveStatus.context?.percent || 0) >= 75 ? 'text-red-400' :
+                    (liveStatus.context?.percent || 0) >= 55 ? 'text-yellow-400' : 'text-cyan-400'
+                  }`}>{liveStatus.context?.percent ?? 0}%</p>
+                  <p className="text-[10px] text-gray-500">{formatTokens(liveStatus.context?.used)} / {formatTokens(liveStatus.context?.max)}</p>
+                </div>
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <p className="text-[10px] text-gray-500 uppercase mb-1">Remaining</p>
+                  <p className="text-lg font-bold text-green-400">{liveStatus.usage?.windowPercentLeft ?? 0}%</p>
+                  <p className="text-[10px] text-gray-500">{liveStatus.usage?.windowTimeLeft || '—'} · week {liveStatus.usage?.weekPercentLeft ?? 0}%</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {liveStatus.runtime && <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">{liveStatus.runtime.mode} · think {liveStatus.runtime.thinking}</span>}
+                {liveStatus.runtime?.elevated && <span className="text-[10px] bg-yellow-900/30 text-yellow-500 px-2 py-0.5 rounded font-mono">elevated</span>}
+                {liveStatus.queue && <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">queue {liveStatus.queue.name} ({liveStatus.queue.depth})</span>}
+                {!!liveStatus.context?.compactions && <span className="text-[10px] bg-orange-900/30 text-orange-400 px-2 py-0.5 rounded font-mono">{liveStatus.context.compactions} compactions</span>}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500">No live session status available</div>
+          )}
         </div>
       </div>
 

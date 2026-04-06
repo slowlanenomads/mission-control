@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Settings, Server, Radio, Cpu, Shield, Globe, Key, Eye, EyeOff } from 'lucide-react'
+import { Settings, Server, Radio, Cpu, Shield, Globe, Key, Eye, EyeOff, Activity, Info } from 'lucide-react'
 import { useApi } from '../hooks/useApi'
 import { Skeleton } from '../components/Skeleton'
 
@@ -39,6 +39,97 @@ interface VersionInfo {
   openclaw: string
   node: string
   mc: string
+}
+
+interface LiveSessionStatus {
+  raw?: string
+  model?: string
+  version?: string
+  commit?: string
+  tokens?: { input: number; output: number; total: number }
+  cache?: { hitPercent: number; cachedTokens: number; newTokens: number }
+  context?: { used: number; max: number; percent: number; compactions: number }
+  usage?: { windowPercentLeft: number; windowTimeLeft: string; weekPercentLeft: number; weekTimeLeft: string }
+  runtime?: { mode: string; thinking: string; elevated: boolean }
+  queue?: { name: string; depth: number }
+  updated?: string
+}
+
+function formatTokens(n?: number): string {
+  if (!n) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return n.toString()
+}
+
+function LiveStatusCompact({ status, loading }: { status?: LiveSessionStatus; loading?: boolean }) {
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-cyan-400" />
+          <h3 className="text-sm font-semibold">Live Session Status</h3>
+        </div>
+        {status?.updated && <span className="text-[11px] text-gray-400 font-mono bg-gray-800/70 px-2 py-0.5 rounded">updated {status.updated}</span>}
+      </div>
+      <div className="p-6">
+        {loading && !status ? (
+          <div className="space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-28" />
+              </div>
+            ))}
+          </div>
+        ) : status ? (
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Model</p>
+              <p className="text-sm text-gray-200 font-mono break-all">{status.model || '—'}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-800/50 rounded-lg p-3">
+                <p className="text-[10px] text-gray-500 uppercase mb-1">Tokens</p>
+                <p className="text-sm font-bold text-cyan-400">{formatTokens(status.tokens?.total)}</p>
+                <p className="text-[10px] text-gray-500">{formatTokens(status.tokens?.input)} in / {formatTokens(status.tokens?.output)} out</p>
+              </div>
+              <div className="bg-gray-800/50 rounded-lg p-3">
+                <div className="flex items-center gap-1 mb-1">
+                  <p className="text-[10px] text-gray-500 uppercase">Context</p>
+                  <span title="How full the current model context window is.">
+                    <Info className="w-3 h-3 text-gray-600" />
+                  </span>
+                </div>
+                <p className={`text-sm font-bold ${
+                  (status.context?.percent || 0) >= 75 ? 'text-red-400' :
+                  (status.context?.percent || 0) >= 55 ? 'text-yellow-400' : 'text-cyan-400'
+                }`}>{status.context?.percent ?? 0}%</p>
+                <p className="text-[10px] text-gray-500">{formatTokens(status.context?.used)} / {formatTokens(status.context?.max)}</p>
+              </div>
+              <div className="bg-gray-800/50 rounded-lg p-3">
+                <p className="text-[10px] text-gray-500 uppercase mb-1">Cache</p>
+                <p className="text-sm font-bold text-green-400">{status.cache?.hitPercent ?? 0}% hit</p>
+                <p className="text-[10px] text-gray-500">{formatTokens(status.cache?.cachedTokens)} cached</p>
+              </div>
+              <div className="bg-gray-800/50 rounded-lg p-3">
+                <p className="text-[10px] text-gray-500 uppercase mb-1">Remaining</p>
+                <p className="text-sm font-bold text-green-400">{status.usage?.windowPercentLeft ?? 0}%</p>
+                <p className="text-[10px] text-gray-500">{status.usage?.windowTimeLeft || '—'}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {status.runtime && <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">{status.runtime.mode} · think {status.runtime.thinking}</span>}
+              {status.queue && <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">queue {status.queue.name} ({status.queue.depth})</span>}
+              {!!status.context?.compactions && <span className="text-[10px] bg-orange-900/30 text-orange-400 px-2 py-0.5 rounded font-mono">{status.context.compactions} compactions</span>}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No live status available</p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function ConfigSection({ title, icon: Icon, items, loading }: { title: string; icon: React.ComponentType<any>; items: ConfigItem[]; loading?: boolean }) {
@@ -156,7 +247,7 @@ function PasswordChangeSection() {
                 onChange={(e) => setNewPassword(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
                 required
-                minLength={12}
+                minLength={8}
               />
             </div>
             <div>
@@ -207,7 +298,7 @@ function PasswordChangeSection() {
               </button>
             </div>
             <div className="text-xs text-gray-500">
-              Password must be at least 12 characters with uppercase, lowercase, and digit.
+              Password must be at least 8 characters.
             </div>
           </form>
         )}
@@ -220,6 +311,7 @@ export default function SettingsPage() {
   const { data: config, loading: configLoading } = useApi<GatewayConfig>('/api/gateway/config', { interval: 60000 })
   const { data: status, loading: statusLoading } = useApi<GatewayStatus>('/api/gateway/status', { interval: 15000 })
   const { data: versionInfo, loading: versionLoading } = useApi<VersionInfo>('/api/system/version', { interval: 120000 })
+  const { data: liveStatus, loading: liveStatusLoading } = useApi<LiveSessionStatus>('/api/session-status-live', { interval: 30000 })
 
   const isConnected = status?.ok === true
   const isLoading = configLoading || statusLoading
@@ -280,6 +372,9 @@ export default function SettingsPage() {
           { label: 'OS', value: status?.os || config?.os || 'Linux 6.8.0 (x64)', mono: true },
           { label: 'Workspace', value: config?.workspace || '/root/.openclaw/workspace', mono: true },
         ]} />
+        <div className="lg:col-span-2">
+          <LiveStatusCompact status={liveStatus} loading={liveStatusLoading} />
+        </div>
         <div className="lg:col-span-2">
           <PasswordChangeSection />
         </div>
