@@ -698,7 +698,8 @@ function parseSessionStatusText(raw: string): Record<string, any> {
         weekPercentLeft: parseInt(usageMatch[3]),
         weekTimeLeft: usageMatch[4].trim(),
       }
-    } else warnings.push('usage')
+    }
+    // Note: usage line is only present for Codex/GPT models, not Anthropic — not a parse error when absent
 
     // Session: 🧵 Session: agent:main:main • updated just now
     const sessionMatch = raw.match(/Session:\s*(\S+)\s*•\s*updated\s*(.+)/i)
