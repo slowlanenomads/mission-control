@@ -70,7 +70,20 @@ interface Session {
   status: string
   lastActivity: string
   messageCount: number
+  model?: string
+  thinkingLevel?: string
+  fastMode?: boolean | null
+  dreamingEnabled?: boolean | null
   recentMessages?: Array<{ role: string; content: string; timestamp: string }>
+}
+
+interface LiveStatus {
+  model?: string
+  tokens?: { input?: number; output?: number; total?: number }
+  cost?: { session?: number }
+  runtime?: { thinking?: string }
+  fastMode?: boolean | null
+  dreamingEnabled?: boolean | null
 }
 
 interface SystemHealth {
@@ -303,7 +316,7 @@ function drawNode(ctx: CanvasRenderingContext2D, node: AgentNode, time: number) 
   if (node.kind === 'main') {
     ctx.fillText(node.label, node.x, node.y - 5)
     ctx.font = '10px monospace'
-    ctx.fillText('OPUS 4.6', node.x, node.y + 8)
+    ctx.fillText(node.model || 'MAIN SESSION', node.x, node.y + 8)
   } else {
     // Sub-agent label
     ctx.fillText(node.label, node.x, node.y + node.radius + 15)
@@ -446,7 +459,7 @@ export default function TheGrid() {
   const { data: subagentRuns } = useApi<SubagentRun[]>('/api/subagent-runs?limit=20', { interval: 10000 })
   const { data: systemHealth } = useApi<SystemHealth>('/api/system/health', { interval: 10000 })
   const { data: cronJobs } = useApi<CronJob[]>('/api/cron', { interval: 30000 })
-  const { data: sessionStatus } = useApi<{model: string, inputTokens: number, outputTokens: number, cost?: number}>('/api/session-status', { interval: 10000 })
+  const { data: sessionStatus } = useApi<LiveStatus>('/api/session-status-live', { interval: 10000 })
   
   const stateRef = useRef({
     nodes: [] as AgentNode[],
@@ -557,6 +570,7 @@ export default function TheGrid() {
       id: 'main',
       label: 'SYKE_AGENT_1',
       kind: 'main',
+      model: sessionStatus?.model ? shortenModel(sessionStatus.model) : 'MAIN SESSION',
       x: centerX,
       y: centerY,
       targetX: centerX,
@@ -695,10 +709,11 @@ export default function TheGrid() {
   // Update real token and cost data
   useEffect(() => {
     if (sessionStatus) {
-      const totalInput = sessionStatus.inputTokens || 0
-      const totalOutput = sessionStatus.outputTokens || 0
-      setTotalTokens(totalInput + totalOutput)
-      setTotalCost(sessionStatus.cost || 0)
+      const totalInput = sessionStatus.tokens?.input || 0
+      const totalOutput = sessionStatus.tokens?.output || 0
+      const total = sessionStatus.tokens?.total || (totalInput + totalOutput)
+      setTotalTokens(total)
+      setTotalCost(sessionStatus.cost?.session || 0)
     }
   }, [sessionStatus])
   
@@ -880,10 +895,13 @@ export default function TheGrid() {
         
         {/* Bottom-Right: Agent Status */}
         <div className="absolute bottom-4 right-4 font-mono text-green-400 text-sm">
-          <div className="border border-green-800 bg-black/50 p-3 backdrop-blur">
-            <div>AGENTS ONLINE: {(() => {
-              const sessionsArray = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions || []
-              return sessionsArray.length
+          <div className="border border-green-800 bg-black/50 p-3 backdrop-blur min-w-[290px]">
+            <div>MAIN MODEL: {sessionStatus?.model ? shortenModel(sessionStatus.model) : 'unknown'}</div>
+            <div>THINK: {sessionStatus?.runtime?.thinking || 'unknown'} {sessionStatus?.fastMode === true ? '· FAST ON' : sessionStatus?.fastMode === false ? '· FAST OFF' : '· FAST ?'}</div>
+            <div>DREAMING: {sessionStatus?.dreamingEnabled === true ? 'ON' : sessionStatus?.dreamingEnabled === false ? 'OFF' : 'UNKNOWN'}</div>
+            <div>SUB-AGENTS ACTIVE: {(() => {
+              const runs = Array.isArray(subagentRuns) ? subagentRuns : []
+              return runs.filter((r: SubagentRun) => r.status === 'running').length
             })()}</div>
             <div>CRON ACTIVE: {(() => {
               const cronList = Array.isArray(cronJobs) ? cronJobs : (cronJobs as any)?.jobs ?? []

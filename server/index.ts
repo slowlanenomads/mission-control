@@ -228,7 +228,29 @@ function inferSessionKind(session: any): string {
   return session.kind === 'other' ? 'main' : (session.kind || 'other')
 }
 
-function normalizeSession(s: any): any {
+function readSessionMetaMap(): Record<string, any> {
+  try {
+    const p = path.join(os.homedir(), '.openclaw/agents/main/sessions/sessions.json')
+    if (!fs.existsSync(p)) return {}
+    return JSON.parse(fs.readFileSync(p, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function readDreamingEnabled(): boolean | null {
+  try {
+    const p = path.join(os.homedir(), '.openclaw/openclaw.json')
+    if (!fs.existsSync(p)) return null
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+    const value = cfg?.plugins?.entries?.['memory-core']?.config?.dreaming?.enabled
+    return typeof value === 'boolean' ? value : null
+  } catch {
+    return null
+  }
+}
+
+function normalizeSession(s: any, sessionMeta?: any, dreamingEnabled?: boolean | null): any {
   // Extract last message timestamps for activity
   const messages = (s.messages || []).map((m: any) => {
     const content = Array.isArray(m.content)
@@ -252,6 +274,9 @@ function normalizeSession(s: any): any {
     totalTokens: s.totalTokens,
     contextTokens: s.contextTokens,
     recentMessages: messages,
+    thinkingLevel: s.thinkingLevel || sessionMeta?.thinkingLevel || '',
+    fastMode: typeof s.fastMode === 'boolean' ? s.fastMode : (typeof sessionMeta?.fastMode === 'boolean' ? sessionMeta.fastMode : false),
+    dreamingEnabled,
   }
 }
 
@@ -288,7 +313,9 @@ app.get('/api/sessions', async (req, res) => {
     const result = await invokeGateway('sessions_list', args)
     // Normalize session data for frontend
     const raw = result?.sessions || (Array.isArray(result) ? result : [])
-    const sessions = raw.map(normalizeSession)
+    const sessionMetaMap = readSessionMetaMap()
+    const dreamingEnabled = readDreamingEnabled()
+    const sessions = raw.map((s: any) => normalizeSession(s, sessionMetaMap[s.key || s.sessionKey], dreamingEnabled))
     res.json({ count: sessions.length, sessions })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
@@ -774,6 +801,11 @@ app.get('/api/session-status-live', async (_req, res) => {
     }
 
     const parsed = parseSessionStatusText(statusText)
+    const sessionMeta = readSessionMetaMap()['agent:main:main'] || {}
+    if (!parsed.runtime) parsed.runtime = {}
+    if (sessionMeta?.thinkingLevel && !parsed.runtime.thinking) parsed.runtime.thinking = sessionMeta.thinkingLevel
+    parsed.fastMode = typeof sessionMeta?.fastMode === 'boolean' ? sessionMeta.fastMode : false
+    parsed.dreamingEnabled = readDreamingEnabled()
     res.json(parsed)
   } catch (e: any) {
     res.status(500).json({ error: e.message })

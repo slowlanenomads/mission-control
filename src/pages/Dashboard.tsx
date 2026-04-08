@@ -39,6 +39,8 @@ interface LiveSessionStatus {
   usage?: { windowPercentLeft: number; windowTimeLeft: string; weekPercentLeft: number; weekTimeLeft: string }
   runtime?: { mode: string; thinking: string; elevated: boolean }
   queue?: { name: string; depth: number }
+  fastMode?: boolean | null
+  dreamingEnabled?: boolean | null
   sessionKey?: string
   updated?: string
   parseWarnings?: string[]
@@ -347,24 +349,43 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* Runtime + Queue */}
+                {/* Thinking + Runtime + Queue */}
                 {(liveStatus.runtime || liveStatus.queue) && (
-                  <div className="border-t border-gray-800/50 pt-3 flex flex-wrap gap-2">
+                  <div className="border-t border-gray-800/50 pt-3 space-y-3">
                     {liveStatus.runtime && (
-                      <>
-                        <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">{liveStatus.runtime.mode}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${
-                          liveStatus.runtime.thinking === 'off' ? 'bg-gray-800 text-gray-500' : 'bg-purple-900/40 text-purple-400'
-                        }`}>think: {liveStatus.runtime.thinking}</span>
-                        {liveStatus.runtime.elevated && (
-                          <span className="text-[10px] bg-yellow-900/30 text-yellow-500 px-2 py-0.5 rounded font-mono">elevated</span>
-                        )}
-                      </>
-                    )}
-                    {liveStatus.queue && (
-                      <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">
-                        queue: {liveStatus.queue.name} ({liveStatus.queue.depth})
-                      </span>
+                      <div className="bg-gray-800/40 rounded-lg p-3 border border-gray-800/80">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-[10px] text-gray-500 uppercase tracking-wider">Thinking</p>
+                          <span
+                            className={`text-xs font-bold px-2 py-0.5 rounded font-mono ${
+                              liveStatus.runtime.thinking === 'off' ? 'bg-gray-800 text-gray-400' :
+                              liveStatus.runtime.thinking === 'minimal' || liveStatus.runtime.thinking === 'low' ? 'bg-blue-900/30 text-blue-400' :
+                              liveStatus.runtime.thinking === 'medium' ? 'bg-purple-900/40 text-purple-400' :
+                              'bg-fuchsia-900/40 text-fuchsia-400'
+                            }`}
+                            title="Current session thinking level"
+                          >
+                            {liveStatus.runtime.thinking || 'off'}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${liveStatus.fastMode === true ? 'bg-cyan-900/30 text-cyan-400' : 'bg-gray-800 text-gray-400'}`}>
+                            fast: {liveStatus.fastMode === true ? 'on' : liveStatus.fastMode === false ? 'off' : 'unknown'}
+                          </span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${liveStatus.dreamingEnabled === true ? 'bg-violet-900/30 text-violet-400' : 'bg-gray-800 text-gray-400'}`}>
+                            dreaming: {liveStatus.dreamingEnabled === true ? 'on' : liveStatus.dreamingEnabled === false ? 'off' : 'unknown'}
+                          </span>
+                          <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">runtime: {liveStatus.runtime.mode}</span>
+                          {liveStatus.runtime.elevated && (
+                            <span className="text-[10px] bg-yellow-900/30 text-yellow-500 px-2 py-0.5 rounded font-mono">elevated</span>
+                          )}
+                          {liveStatus.queue && (
+                            <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">
+                              queue: {liveStatus.queue.name} ({liveStatus.queue.depth})
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
