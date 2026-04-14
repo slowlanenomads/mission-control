@@ -62,7 +62,7 @@ function formatTokens(n?: number): string {
   return n.toString()
 }
 
-function LiveStatusCompact({ status, loading }: { status?: LiveSessionStatus; loading?: boolean }) {
+function LiveStatusCompact({ status, loading }: { status?: LiveSessionStatus | null; loading?: boolean }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
       <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
@@ -118,8 +118,21 @@ function LiveStatusCompact({ status, loading }: { status?: LiveSessionStatus; lo
                 <p className="text-[10px] text-gray-500">{status.usage?.windowTimeLeft || '—'}</p>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-800/50 rounded-lg p-3">
+                <p className="text-[10px] text-gray-500 uppercase mb-1">Thinking</p>
+                <p className={`text-sm font-bold font-mono ${
+                  status.runtime?.thinking === 'off' ? 'text-gray-300' :
+                  status.runtime?.thinking === 'minimal' || status.runtime?.thinking === 'low' ? 'text-blue-400' :
+                  status.runtime?.thinking === 'medium' ? 'text-purple-400' : 'text-fuchsia-400'
+                }`}>{status.runtime?.thinking || 'off'}</p>
+              </div>
+              <div className="bg-gray-800/50 rounded-lg p-3">
+                <p className="text-[10px] text-gray-500 uppercase mb-1">Runtime</p>
+                <p className="text-sm font-bold text-gray-300 font-mono">{status.runtime?.mode || '—'}</p>
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
-              {status.runtime && <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">{status.runtime.mode} · think {status.runtime.thinking}</span>}
               {status.queue && <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded font-mono">queue {status.queue.name} ({status.queue.depth})</span>}
               {!!status.context?.compactions && <span className="text-[10px] bg-orange-900/30 text-orange-400 px-2 py-0.5 rounded font-mono">{status.context.compactions} compactions</span>}
             </div>
