@@ -314,7 +314,138 @@ function extractToolName(content: string): string | undefined {
   return match?.[1]
 }
 
-function buildLiveActivity(sessions: any[]): any {
+function flattenMessageText(content: any): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((c: any) => c?.type === 'text')
+    .map((c: any) => c?.text || '')
+    .join('\n')
+}
+
+function normalizeHistoryMessage(message: any): any {
+  const contentItems = Array.isArray(message?.content) ? message.content : []
+  const toolCall = contentItems.find((c: any) => c?.type === 'toolCall')
+  const thinking = contentItems.find((c: any) => c?.type === 'thinking')
+  return {
+    role: message?.role === 'toolResult' ? 'tool' : message?.role,
+    timestamp: message?.timestamp ? new Date(message.timestamp).toISOString() : undefined,
+    toolName: message?.toolName || toolCall?.name,
+    toolArguments: toolCall?.arguments,
+    content: flattenMessageText(message?.content),
+    isError: message?.isError === true,
+    hasToolCall: Boolean(toolCall),
+    hasThinking: Boolean(thinking),
+  }
+}
+
+function basenameSafe(value?: string): string | undefined {
+  if (!value) return undefined
+  const cleaned = String(value).trim().replace(/["']/g, '')
+  const parts = cleaned.split('/').filter(Boolean)
+  return parts[parts.length - 1] || cleaned
+}
+
+function shortenCommand(command?: string): string | undefined {
+  if (!command) return undefined
+  const oneLine = command.replace(/\s+/g, ' ').trim()
+  return oneLine.length > 72 ? `${oneLine.slice(0, 69)}...` : oneLine
+}
+
+function summarizeToolEvent(toolName?: string, args?: any): { phase: string; label: string; detail: string; toolName?: string } {
+  const tool = toolName || 'tool'
+  const path = args?.path || args?.filePath
+  const file = basenameSafe(path)
+
+  if (tool === 'read') {
+    return { phase: 'tool_running', label: 'READ', detail: file ? `Inspecting ${file}` : 'Reading files', toolName: tool }
+  }
+  if (tool === 'edit' || tool === 'apply_patch' || tool === 'write') {
+    return { phase: 'composing', label: tool === 'write' ? 'WRITE' : 'EDIT', detail: file ? `Updating ${file}` : 'Editing files', toolName: tool }
+  }
+  if (tool === 'memory_search' || tool === 'memory_get' || tool === 'lcm_grep' || tool === 'lcm_expand' || tool === 'lcm_expand_query') {
+    return { phase: 'tool_running', label: 'RECALL', detail: 'Searching memory', toolName: tool }
+  }
+  if (tool === 'sessions_spawn') {
+    return { phase: 'waiting_subagent', label: 'SPAWN', detail: 'Starting sub-agent work', toolName: tool }
+  }
+  if (tool === 'exec') {
+    const command = String(args?.command || '')
+    const compact = shortenCommand(command) || 'Running shell command'
+    if (/\b(rg|grep|sed|awk|find|ls|git status)\b/.test(command)) {
+      return { phase: 'tool_running', label: 'INSPECT', detail: compact, toolName: tool }
+    }
+    return { phase: 'tool_running', label: 'EXEC', detail: compact, toolName: tool }
+  }
+  if (tool === 'web_fetch' || tool === 'browser' || tool === 'image' || tool === 'pdf') {
+    return { phase: 'tool_running', label: 'RESEARCH', detail: `Using ${tool}`, toolName: tool }
+  }
+  if (tool === 'update_plan') {
+    return { phase: 'composing', label: 'PLAN', detail: 'Updating plan', toolName: tool }
+  }
+  return { phase: 'tool_running', label: `TOOL ${tool.toUpperCase()}`, detail: `Running ${tool}`, toolName: tool }
+}
+
+function buildMainActivityFromHistory(messages: any[]): { latestEvent?: any; recentEvents: any[]; basis: string[] } {
+  const basis: string[] = []
+  const normalized = messages
+    .map(normalizeHistoryMessage)
+    .filter((m: any) => m.timestamp)
+    .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+  const recentEvents = normalized.flatMap((m: any) => {
+    if (m.role === 'user') {
+      return [{
+        timestamp: m.timestamp,
+        phase: 'receiving',
+        label: 'RECEIVING',
+        detail: 'Inbound message',
+      }]
+    }
+
+    if (m.role === 'assistant' && m.hasToolCall) {
+      return [{
+        timestamp: m.timestamp,
+        ...summarizeToolEvent(m.toolName, m.toolArguments),
+      }]
+    }
+
+    if (m.role === 'tool' && m.isError) {
+      return [{
+        timestamp: m.timestamp,
+        phase: 'error',
+        label: m.toolName ? `ERR ${m.toolName.toUpperCase()}` : 'TOOL ERROR',
+        detail: 'Tool call failed',
+        toolName: m.toolName,
+      }]
+    }
+
+    if (m.role === 'assistant' && !m.hasToolCall) {
+      return [{
+        timestamp: m.timestamp,
+        phase: 'done',
+        label: 'REPLY',
+        detail: 'Assistant response',
+      }]
+    }
+
+    return []
+  })
+
+  if (recentEvents.length > 0) {
+    basis.push('main-session history exposes recent tool calls, inbound messages, and replies')
+  } else {
+    basis.push('main-session history did not expose recent structured events')
+  }
+
+  return {
+    latestEvent: recentEvents[recentEvents.length - 1],
+    recentEvents: recentEvents.slice(-10).reverse(),
+    basis,
+  }
+}
+
+function buildLiveActivity(sessions: any[], mainHistoryMessages: any[] = []): any {
   const now = Date.now()
   const mainSession = sessions.find((s: any) => s.kind === 'main' || s.sessionKey === 'agent:main:main') || sessions[0]
   const subagentSessions = sessions.filter((s: any) => s.kind === 'subagent')
@@ -326,6 +457,10 @@ function buildLiveActivity(sessions: any[]): any {
   const latest = recentMainMessages[recentMainMessages.length - 1]
   const latestTs = latest?.timestamp ? new Date(latest.timestamp).getTime() : 0
   const latestAgeMs = latestTs ? Math.max(0, now - latestTs) : Infinity
+  const historyActivity = buildMainActivityFromHistory(mainHistoryMessages)
+  const latestHistoryEvent = historyActivity.latestEvent
+  const latestHistoryTs = latestHistoryEvent?.timestamp ? new Date(latestHistoryEvent.timestamp).getTime() : 0
+  const latestHistoryAgeMs = latestHistoryTs ? Math.max(0, now - latestHistoryTs) : Infinity
   const activeSubagents = subagentSessions.filter((s: any) => {
     if (!s.lastActivity) return false
     return now - new Date(s.lastActivity).getTime() < 15 * 60 * 1000
@@ -335,11 +470,34 @@ function buildLiveActivity(sessions: any[]): any {
   let label = 'Idle'
   let detail = 'Waiting for work'
   let toolName: string | undefined
-  let startedAt = latest?.timestamp || mainSession?.lastActivity || new Date(now).toISOString()
+  let startedAt = latestHistoryEvent?.timestamp || latest?.timestamp || mainSession?.lastActivity || new Date(now).toISOString()
   let confidence: 'observed' | 'inferred' = 'inferred'
-  const basis: string[] = []
+  const basis: string[] = [...historyActivity.basis]
 
-  if (activeSubagents.length > 0) {
+  if (latestHistoryEvent && latestHistoryEvent.phase === 'tool_running' && latestHistoryAgeMs < 2 * 60 * 1000) {
+    phase = latestHistoryEvent.phase
+    label = latestHistoryEvent.label
+    detail = latestHistoryEvent.detail
+    toolName = latestHistoryEvent.toolName
+    startedAt = latestHistoryEvent.timestamp || startedAt
+    confidence = 'observed'
+    basis.push('latest visible main-session event is a tool call from session history')
+  } else if (latestHistoryEvent && latestHistoryEvent.phase === 'composing' && latestHistoryAgeMs < 2 * 60 * 1000) {
+    phase = latestHistoryEvent.phase
+    label = latestHistoryEvent.label
+    detail = latestHistoryEvent.detail
+    toolName = latestHistoryEvent.toolName
+    startedAt = latestHistoryEvent.timestamp || startedAt
+    confidence = 'observed'
+    basis.push('latest visible main-session event is an editing/writing action from session history')
+  } else if (latestHistoryEvent && latestHistoryEvent.phase === 'receiving' && latestHistoryAgeMs < 90 * 1000) {
+    phase = 'receiving'
+    label = latestHistoryEvent.label
+    detail = latestHistoryEvent.detail
+    startedAt = latestHistoryEvent.timestamp || startedAt
+    confidence = 'observed'
+    basis.push('latest visible main-session event is an inbound message from session history')
+  } else if (activeSubagents.length > 0) {
     phase = 'waiting_subagent'
     label = activeSubagents.length === 1 ? 'Waiting on sub-agent' : `Waiting on ${activeSubagents.length} sub-agents`
     detail = activeSubagents
@@ -349,6 +507,13 @@ function buildLiveActivity(sessions: any[]): any {
     startedAt = activeSubagents[0]?.lastActivity || startedAt
     confidence = 'observed'
     basis.push(`${activeSubagents.length} sub-agent session${activeSubagents.length === 1 ? '' : 's'} with recent activity`)
+  } else if (latestHistoryEvent && latestHistoryEvent.phase === 'done' && latestHistoryAgeMs < 3 * 60 * 1000) {
+    phase = 'done'
+    label = latestHistoryAgeMs < 20 * 1000 ? 'Reply just sent' : latestHistoryEvent.label
+    detail = latestHistoryEvent.detail
+    startedAt = latestHistoryEvent.timestamp || startedAt
+    confidence = 'observed'
+    basis.push('latest visible main-session event is an assistant reply from session history')
   } else if (latest?.role === 'assistant' && latestAgeMs < 3 * 60 * 1000) {
     phase = 'done'
     label = latestAgeMs < 20 * 1000 ? 'Reply just sent' : 'Reply sent'
@@ -361,7 +526,7 @@ function buildLiveActivity(sessions: any[]): any {
     else basis.push('no recent visible session activity')
   }
 
-  const recentEvents = recentMainMessages
+  const recentEventsFromSessions = recentMainMessages
     .slice(-8)
     .reverse()
     .map((m: any) => {
@@ -397,12 +562,12 @@ function buildLiveActivity(sessions: any[]): any {
     detail: `Waiting on ${s.label || s.sessionKey.split(':').slice(-1)[0]}`,
   }))
 
-  const mergedEvents = [...recentEvents, ...waitingEvents]
+  const mergedEvents = [...historyActivity.recentEvents, ...recentEventsFromSessions, ...waitingEvents]
     .filter((e: any) => e.timestamp)
     .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 10)
 
-  const candidateUpdatedAt = [mainSession?.lastActivity, latest?.timestamp]
+  const candidateUpdatedAt = [latestHistoryEvent?.timestamp, mainSession?.lastActivity, latest?.timestamp]
     .filter(Boolean)
     .sort((a: any, b: any) => new Date(b).getTime() - new Date(a).getTime())[0]
 
@@ -416,7 +581,7 @@ function buildLiveActivity(sessions: any[]): any {
     sessionKey: mainSession?.sessionKey,
     activeSubagents: activeSubagents.length,
     confidence,
-    source: 'sessions_list observable activity (replies + sub-agent activity)',
+    source: 'observable messages + tool calls from session history, plus sub-agent activity',
     basis: basis.join(' • '),
     recentEvents: mergedEvents,
   }
@@ -490,7 +655,21 @@ app.get('/api/live-activity', async (_req, res) => {
     const sessionMetaMap = readSessionMetaMap()
     const dreamingEnabled = readDreamingEnabled()
     const sessions = raw.map((s: any) => normalizeSession(s, sessionMetaMap[s.key || s.sessionKey], dreamingEnabled))
-    res.json(buildLiveActivity(sessions))
+    const mainSession = sessions.find((s: any) => s.kind === 'main' || s.sessionKey === 'agent:main:main') || sessions[0]
+    let mainHistoryMessages: any[] = []
+    if (mainSession?.sessionKey) {
+      try {
+        const historyResult = await invokeGateway('sessions_history', {
+          sessionKey: mainSession.sessionKey,
+          limit: 24,
+          includeTools: true,
+        })
+        mainHistoryMessages = historyResult?.messages || (Array.isArray(historyResult) ? historyResult : [])
+      } catch (historyError: any) {
+        console.warn('live-activity: failed to load main session history:', historyError?.message || historyError)
+      }
+    }
+    res.json(buildLiveActivity(sessions, mainHistoryMessages))
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }

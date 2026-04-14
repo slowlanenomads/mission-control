@@ -215,6 +215,7 @@ function summarizeBasis(basis?: string): string {
   if (!basis) return 'no recent visible signals'
   if (basis.includes('assistant message')) return 'recent assistant reply visible'
   if (basis.includes('sub-agent session')) return 'recent sub-agent activity visible'
+  if (basis.includes('main-session history exposes recent tool calls')) return 'main-session history currently exposes tool calls, inbound messages, and replies'
   if (basis.includes('reliable reply history and sub-agent activity')) return 'feed currently exposes replies and sub-agent activity only'
   return basis
 }
@@ -924,7 +925,7 @@ export default function TheGrid() {
         <div className="absolute top-4 right-4 w-96 font-mono text-green-400 text-xs">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur h-48 overflow-y-auto">
             <div className="mb-2 text-[10px]" style={{ color: COLORS.greenMid }}>
-              observable signals only
+              {liveActivity?.source || 'observable messages + tool calls only'}
             </div>
             {activityFeed}
           </div>
