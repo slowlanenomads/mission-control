@@ -211,6 +211,14 @@ function getPhaseBadge(phase?: string): string {
   }
 }
 
+function summarizeBasis(basis?: string): string {
+  if (!basis) return 'no recent visible signals'
+  if (basis.includes('assistant message')) return 'recent assistant reply visible'
+  if (basis.includes('sub-agent session')) return 'recent sub-agent activity visible'
+  if (basis.includes('reliable reply history and sub-agent activity')) return 'feed currently exposes replies and sub-agent activity only'
+  return basis
+}
+
 function getNodeColor(kind: string, status?: string): string {
   if (kind === 'main') return getPhaseColor(status)
   if (kind === 'cron') return COLORS.amber
@@ -916,7 +924,7 @@ export default function TheGrid() {
         <div className="absolute top-4 right-4 w-96 font-mono text-green-400 text-xs">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur h-48 overflow-y-auto">
             <div className="mb-2 text-[10px]" style={{ color: COLORS.greenMid }}>
-              observable signals only, no raw chain-of-thought
+              observable signals only
             </div>
             {activityFeed}
           </div>
@@ -949,15 +957,17 @@ export default function TheGrid() {
         
         {/* Bottom-Right: Agent Status */}
         <div className="absolute bottom-4 right-4 font-mono text-green-400 text-sm">
-          <div className="border border-green-800 bg-black/50 p-3 backdrop-blur min-w-[290px]">
+          <div className="border border-green-800 bg-black/50 p-3 backdrop-blur w-[380px] max-w-[40vw] leading-snug">
             <div>MAIN MODEL: {sessionStatus?.model ? shortenModel(sessionStatus.model) : 'unknown'}</div>
             <div>STATE: {liveActivity?.label || 'Idle'} [{getPhaseBadge(liveActivity?.phase)}]</div>
             <div>DETAIL: {liveActivity?.detail || 'Waiting for work'}</div>
             <div>THINK: {sessionStatus?.runtime?.thinking || 'unknown'} {sessionStatus?.fastMode === true ? '· FAST ON' : sessionStatus?.fastMode === false ? '· FAST OFF' : '· FAST ?'}</div>
             <div>DREAMING: {sessionStatus?.dreamingEnabled === true ? 'ON' : sessionStatus?.dreamingEnabled === false ? 'OFF' : 'UNKNOWN'}</div>
             <div>TOOL: {liveActivity?.toolName || '—'}</div>
-            <div>SOURCE: {(liveActivity?.confidence || 'inferred').toUpperCase()} · {liveActivity?.source || 'observable session activity'}</div>
-            <div>BASIS: {liveActivity?.basis || 'no recent visible signals'}</div>
+            <div className="mt-1 pt-1 border-t border-green-900/60 text-xs" style={{ color: COLORS.greenMid }}>
+              <div>CONFIDENCE: {(liveActivity?.confidence || 'inferred').toUpperCase()}</div>
+              <div className="mt-1 break-words">BASIS: {summarizeBasis(liveActivity?.basis)}</div>
+            </div>
             <div>SUB-AGENTS ACTIVE: {liveActivity?.activeSubagents ?? (() => {
               const runs = Array.isArray(subagentRuns) ? subagentRuns : []
               return runs.filter((r: SubagentRun) => r.status === 'running').length
