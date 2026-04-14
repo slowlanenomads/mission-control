@@ -37,6 +37,7 @@ interface ConfigItem {
 
 interface VersionInfo {
   openclaw: string
+  commit?: string
   node: string
   mc: string
 }
@@ -329,11 +330,15 @@ export default function SettingsPage() {
   const isConnected = status?.ok === true
   const isLoading = configLoading || statusLoading
 
-  const model = config?.defaultModel || config?.model || 'Unknown'
-  const version = config?.version || 'Unknown'
+  const model = liveStatus?.model || config?.defaultModel || config?.model || 'Unknown'
+  const version = versionInfo?.openclaw || 'Unknown'
   const channel = config?.channel || (config?.channels ? config.channels.join(', ') : 'Unknown')
   const capabilities = config?.capabilities || 'Unknown'
-  const thinking = config?.thinking || 'Unknown'
+  const thinking = liveStatus?.runtime?.thinking || config?.thinking || 'Unknown'
+  const provider = model.includes('openai-codex') ? 'OpenAI Codex OAuth' :
+    model.includes('openrouter/') ? 'OpenRouter' :
+    model.includes('anthropic/') || model.includes('claude') ? 'Anthropic' :
+    model.includes('gpt') ? 'OpenAI' : 'Unknown'
 
   return (
     <div className="space-y-6">
@@ -351,14 +356,14 @@ export default function SettingsPage() {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ConfigSection title="Gateway" icon={Server} loading={isLoading && !config} items={[
-          { label: 'Version', value: version, mono: true },
+          { label: 'OpenClaw Version', value: version, mono: true },
           { label: 'Port', value: status?.port ? String(status.port) : '18789', mono: true },
           { label: 'API Endpoint', value: `http://127.0.0.1:${status?.port || 18789}`, mono: true },
-          { label: 'Status', value: isConnected ? 'Running' : 'Unknown' },
+          { label: 'Status', value: isConnected ? 'Connected' : (status?.error || 'Unknown') },
         ]} />
         <ConfigSection title="Model" icon={Cpu} loading={isLoading && !config} items={[
-          { label: 'Default Model', value: model, mono: true },
-          { label: 'Provider', value: model.includes('claude') ? 'Anthropic' : model.includes('gpt') ? 'OpenAI' : 'Unknown' },
+          { label: 'Current Main Model', value: model, mono: true },
+          { label: 'Provider', value: provider },
           { label: 'Thinking', value: thinking },
         ]} />
         <ConfigSection title="Channels" icon={Radio} loading={isLoading && !config} items={[
@@ -380,9 +385,9 @@ export default function SettingsPage() {
           { label: 'Auto-refresh', value: '15-30s intervals' },
         ]} />
         <ConfigSection title="Environment" icon={Settings} loading={versionLoading && !versionInfo} items={[
-          { label: 'OpenClaw Version', value: versionInfo?.openclaw || 'Unknown', mono: true },
-          { label: 'Node.js', value: versionInfo?.node || status?.nodeVersion || config?.nodeVersion || 'v22.22.0', mono: true },
-          { label: 'OS', value: status?.os || config?.os || 'Linux 6.8.0 (x64)', mono: true },
+          { label: 'OpenClaw Build', value: versionInfo?.commit ? `${versionInfo.openclaw} (${versionInfo.commit})` : (versionInfo?.openclaw || 'Unknown'), mono: true },
+          { label: 'Node.js', value: versionInfo?.node || status?.nodeVersion || config?.nodeVersion || 'Unknown', mono: true },
+          { label: 'OS', value: status?.os || config?.os || 'Linux host', mono: true },
           { label: 'Workspace', value: config?.workspace || '/root/.openclaw/workspace', mono: true },
         ]} />
         <div className="lg:col-span-2">

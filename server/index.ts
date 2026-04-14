@@ -500,20 +500,21 @@ app.get('/api/system/version', async (_req, res) => {
   try {
     const { execSync } = require('child_process')
     let openclawVersion = 'Unknown'
+    let openclawCommit: string | undefined
     try {
       const raw = execSync('openclaw --version 2>/dev/null', { timeout: 5000 }).toString().trim()
-      const lines = raw.split('\n')
-      for (const line of lines) {
-        if (!line.startsWith('[plugins]') && line.includes('version') || line.match(/^\d+\.\d+/)) {
-          openclawVersion = line.replace(/^openclaw\s+/, '').trim()
-          break
-        }
+      const clean = stripCliNoise(raw)
+      const match = clean.match(/OpenClaw\s+([0-9][^\s]*)\s*(?:\(([^)]+)\))?/i)
+      if (match) {
+        openclawVersion = match[1]
+        openclawCommit = match[2]
       }
     } catch (e: any) {
       console.warn('Failed to get OpenClaw version:', e.message)
     }
     res.json({
       openclaw: openclawVersion,
+      commit: openclawCommit,
       node: process.version,
       mc: '0.3.0'
     })
@@ -1076,8 +1077,39 @@ app.get('/api/session-status-live', async (_req, res) => {
 
 app.get('/api/gateway/config', async (_req, res) => {
   try {
-    const result = await invokeGateway('gateway', { action: 'config.get' })
-    res.json(result)
+    const configPath = path.join(os.homedir(), '.openclaw/openclaw.json')
+    const config = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      : {}
+
+    const channelsObj = config?.channels || {}
+    const enabledChannels = Object.entries(channelsObj)
+      .filter(([, value]: any) => value?.enabled)
+      .map(([name]) => name)
+
+    let cronSummary: string | boolean = 'Unknown'
+    try {
+      if (fs.existsSync(CRON_JOBS_FILE)) {
+        const cronPayload = JSON.parse(fs.readFileSync(CRON_JOBS_FILE, 'utf8'))
+        const jobs = cronPayload?.jobs || (Array.isArray(cronPayload) ? cronPayload : [])
+        cronSummary = `${jobs.length} jobs configured`
+      }
+    } catch {}
+
+    const sessionMeta = readSessionMetaMap()['agent:main:main'] || {}
+    const heartbeatPath = path.join(WORKSPACE, 'HEARTBEAT.md')
+
+    res.json({
+      model: sessionMeta?.model || null,
+      thinking: sessionMeta?.thinkingLevel || null,
+      fastMode: typeof sessionMeta?.fastMode === 'boolean' ? sessionMeta.fastMode : null,
+      channel: enabledChannels[0] || null,
+      channels: enabledChannels,
+      capabilities: enabledChannels.length > 0 ? 'Configured via enabled channel plugins' : 'Unknown',
+      heartbeat: fs.existsSync(heartbeatPath) ? 'workspace heartbeat file present' : 'not configured',
+      cron: cronSummary,
+      workspace: WORKSPACE,
+    })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
