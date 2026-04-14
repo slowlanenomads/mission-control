@@ -803,18 +803,39 @@ function formatTimeUntil(resetAtMs: number, nowMs = Date.now()): string {
   return `${Math.max(0, minutes)}m`
 }
 
+const STRUCTURED_CODEX_USAGE_TTL_MS = 5 * 60 * 1000
+const STRUCTURED_CODEX_USAGE_FAILURE_COOLDOWN_MS = 2 * 60 * 1000
+let structuredCodexUsageCache: { data: Record<string, any> | null; fetchedAt: number; failedAt: number } = {
+  data: null,
+  fetchedAt: 0,
+  failedAt: 0,
+}
+
 function readStructuredCodexUsage(): Record<string, any> | null {
+  const now = Date.now()
+
+  if (structuredCodexUsageCache.data && now - structuredCodexUsageCache.fetchedAt < STRUCTURED_CODEX_USAGE_TTL_MS) {
+    return structuredCodexUsageCache.data
+  }
+
+  if (!structuredCodexUsageCache.data && structuredCodexUsageCache.failedAt && now - structuredCodexUsageCache.failedAt < STRUCTURED_CODEX_USAGE_FAILURE_COOLDOWN_MS) {
+    return null
+  }
+
   try {
     const raw = execFileSync('openclaw', ['status', '--usage', '--json'], {
       encoding: 'utf8',
-      timeout: 15000,
+      timeout: 5000,
     })
     const payload = JSON.parse(stripCliNoise(raw))
     const providers = Array.isArray(payload?.usage?.providers) ? payload.usage.providers : []
     const codex = providers.find((provider: any) => provider?.provider === 'openai-codex')
     const windows = Array.isArray(codex?.windows) ? codex.windows : []
 
-    if (windows.length === 0) return null
+    if (windows.length === 0) {
+      structuredCodexUsageCache = { data: null, fetchedAt: now, failedAt: 0 }
+      return null
+    }
 
     const sessionWindow = windows.find((window: any) => String(window?.label || '').toLowerCase() !== 'week') || windows[0]
     const weekWindow = windows.find((window: any) => String(window?.label || '').toLowerCase() === 'week')
@@ -841,10 +862,16 @@ function readStructuredCodexUsage(): Record<string, any> | null {
       usage.weekResetAt = weekWindow.resetAt ? new Date(Number(weekWindow.resetAt)).toISOString() : null
     }
 
+    structuredCodexUsageCache = { data: usage, fetchedAt: now, failedAt: 0 }
     return usage
   } catch (e: any) {
+    structuredCodexUsageCache = {
+      data: structuredCodexUsageCache.data,
+      fetchedAt: structuredCodexUsageCache.fetchedAt,
+      failedAt: now,
+    }
     console.warn('Failed to read structured Codex usage:', e?.message || e)
-    return null
+    return structuredCodexUsageCache.data || null
   }
 }
 
