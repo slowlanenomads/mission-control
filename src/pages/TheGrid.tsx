@@ -86,6 +86,28 @@ interface LiveStatus {
   dreamingEnabled?: boolean | null
 }
 
+interface LiveActivityEvent {
+  timestamp: string
+  phase: string
+  label: string
+  detail: string
+}
+
+interface LiveActivity {
+  phase: string
+  label: string
+  detail: string
+  toolName?: string
+  startedAt?: string
+  updatedAt?: string
+  sessionKey?: string
+  activeSubagents?: number
+  confidence?: 'observed' | 'inferred'
+  source?: string
+  basis?: string
+  recentEvents?: LiveActivityEvent[]
+}
+
 interface SystemHealth {
   cpu?: {
     cores: number
@@ -159,8 +181,38 @@ function formatCountdown(nextRun: string): string {
   }
 }
 
+function getPhaseColor(phase?: string): string {
+  switch (phase) {
+    case 'receiving':
+    case 'tool_running':
+      return COLORS.cyan
+    case 'reasoning':
+    case 'waiting_subagent':
+      return COLORS.amber
+    case 'error':
+      return COLORS.red
+    case 'idle':
+      return COLORS.greenDark
+    default:
+      return COLORS.green
+  }
+}
+
+function getPhaseBadge(phase?: string): string {
+  switch (phase) {
+    case 'receiving': return 'RECV'
+    case 'reasoning': return 'THINK'
+    case 'tool_running': return 'TOOL'
+    case 'waiting_subagent': return 'WAIT'
+    case 'composing': return 'WRITE'
+    case 'done': return 'DONE'
+    case 'error': return 'ERR'
+    default: return 'IDLE'
+  }
+}
+
 function getNodeColor(kind: string, status?: string): string {
-  if (kind === 'main') return COLORS.green
+  if (kind === 'main') return getPhaseColor(status)
   if (kind === 'cron') return COLORS.amber
   
   // Sub-agent status-based colors
@@ -314,9 +366,11 @@ function drawNode(ctx: CanvasRenderingContext2D, node: AgentNode, time: number) 
   ctx.textBaseline = 'middle'
   
   if (node.kind === 'main') {
-    ctx.fillText(node.label, node.x, node.y - 5)
+    ctx.fillText(node.label, node.x, node.y - 10)
     ctx.font = '10px monospace'
-    ctx.fillText(node.model || 'MAIN SESSION', node.x, node.y + 8)
+    ctx.fillText(node.model || 'MAIN SESSION', node.x, node.y + 3)
+    ctx.font = '9px monospace'
+    ctx.fillText(getPhaseBadge(node.status), node.x, node.y + 16)
   } else {
     // Sub-agent label
     ctx.fillText(node.label, node.x, node.y + node.radius + 15)
@@ -460,6 +514,7 @@ export default function TheGrid() {
   const { data: systemHealth } = useApi<SystemHealth>('/api/system/health', { interval: 10000 })
   const { data: cronJobs } = useApi<CronJob[]>('/api/cron', { interval: 30000 })
   const { data: sessionStatus } = useApi<LiveStatus>('/api/session-status-live', { interval: 10000 })
+  const { data: liveActivity } = useApi<LiveActivity>('/api/live-activity', { interval: 2500 })
   
   const stateRef = useRef({
     nodes: [] as AgentNode[],
@@ -580,6 +635,7 @@ export default function TheGrid() {
       pulsePhase: 0,
       messageCount: sessionList.reduce((sum, s) => sum + (s.messageCount || 0), 0),
       lastActivity: Date.now(),
+      status: liveActivity?.phase || 'idle',
     }
     
     // Create sub-agent nodes from subagentRuns data
@@ -704,7 +760,7 @@ export default function TheGrid() {
     state.nodes = newNodes
     state.packets = [...state.packets.filter(p => p.progress < 1), ...newPackets]
     
-  }, [sessions, subagentRuns, cronJobs, dimensions])
+  }, [sessions, subagentRuns, cronJobs, dimensions, liveActivity?.phase, sessionStatus?.model])
 
   // Update real token and cost data
   useEffect(() => {
@@ -812,30 +868,25 @@ export default function TheGrid() {
   
   // Prepare activity feed
   const activityFeed = React.useMemo(() => {
-    if (!sessions) return []
-    
-    const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
-    
-    return sessionList
-      .filter(s => s.recentMessages && s.recentMessages.length > 0)
-      .flatMap(s => 
-        (s.recentMessages || []).map(msg => ({
-          sessionKey: s.sessionKey,
-          kind: s.kind,
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp,
-        }))
-      )
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 10)
-      .map((item, index) => (
-        <div key={index} className="text-green-400 font-mono text-xs mb-1 animate-pulse">
-          &gt; [{new Date(item.timestamp).toLocaleTimeString()}] {item.kind.toUpperCase()}{' '}
-          {item.role === 'tool' ? `tool:${item.content.split(' ')[0]}` : 'msg received from Ryan'}
+    const events = liveActivity?.recentEvents || []
+    if (events.length === 0) {
+      return [
+        <div key="empty" className="font-mono text-xs mb-1" style={{ color: COLORS.greenMid }}>
+          &gt; no recent structured activity
         </div>
-      ))
-  }, [sessions])
+      ]
+    }
+
+    return events.map((item, index) => (
+      <div
+        key={index}
+        className="font-mono text-xs mb-1"
+        style={{ color: getPhaseColor(item.phase) }}
+      >
+        &gt; [{new Date(item.timestamp).toLocaleTimeString()}] {item.label} · {item.detail}
+      </div>
+    ))
+  }, [liveActivity])
   
   return (
     <div className="fixed inset-0 lg:left-56 lg:top-[65px] bg-black overflow-hidden crt-container">
@@ -864,6 +915,9 @@ export default function TheGrid() {
         {/* Top-Right: Activity Feed */}
         <div className="absolute top-4 right-4 w-96 font-mono text-green-400 text-xs">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur h-48 overflow-y-auto">
+            <div className="mb-2 text-[10px]" style={{ color: COLORS.greenMid }}>
+              observable signals only, no raw chain-of-thought
+            </div>
             {activityFeed}
           </div>
         </div>
@@ -897,9 +951,14 @@ export default function TheGrid() {
         <div className="absolute bottom-4 right-4 font-mono text-green-400 text-sm">
           <div className="border border-green-800 bg-black/50 p-3 backdrop-blur min-w-[290px]">
             <div>MAIN MODEL: {sessionStatus?.model ? shortenModel(sessionStatus.model) : 'unknown'}</div>
+            <div>STATE: {liveActivity?.label || 'Idle'} [{getPhaseBadge(liveActivity?.phase)}]</div>
+            <div>DETAIL: {liveActivity?.detail || 'Waiting for work'}</div>
             <div>THINK: {sessionStatus?.runtime?.thinking || 'unknown'} {sessionStatus?.fastMode === true ? '· FAST ON' : sessionStatus?.fastMode === false ? '· FAST OFF' : '· FAST ?'}</div>
             <div>DREAMING: {sessionStatus?.dreamingEnabled === true ? 'ON' : sessionStatus?.dreamingEnabled === false ? 'OFF' : 'UNKNOWN'}</div>
-            <div>SUB-AGENTS ACTIVE: {(() => {
+            <div>TOOL: {liveActivity?.toolName || '—'}</div>
+            <div>SOURCE: {(liveActivity?.confidence || 'inferred').toUpperCase()} · {liveActivity?.source || 'observable session activity'}</div>
+            <div>BASIS: {liveActivity?.basis || 'no recent visible signals'}</div>
+            <div>SUB-AGENTS ACTIVE: {liveActivity?.activeSubagents ?? (() => {
               const runs = Array.isArray(subagentRuns) ? subagentRuns : []
               return runs.filter((r: SubagentRun) => r.status === 'running').length
             })()}</div>
@@ -907,6 +966,8 @@ export default function TheGrid() {
               const cronList = Array.isArray(cronJobs) ? cronJobs : (cronJobs as any)?.jobs ?? []
               return cronList.filter((job: CronJob) => job.enabled).length
             })()}</div>
+            <div>PHASE AGE: {liveActivity?.startedAt ? formatDistanceToNow(new Date(liveActivity.startedAt), { addSuffix: true }) : 'unknown'}</div>
+            <div>UPDATED: {liveActivity?.updatedAt ? formatDistanceToNow(new Date(liveActivity.updatedAt), { addSuffix: true }) : 'unknown'}</div>
             <div>LAST ACTIVITY: {(() => {
               const sessionsArray = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions || []
               if (sessionsArray.length === 0) return 'unknown'

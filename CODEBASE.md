@@ -85,6 +85,7 @@ All routes below require valid `mc_token` cookie.
 | `/api/sessions` | GET | `sessions_list` | List sessions (last 24h, 3 recent messages each) |
 | `/api/sessions/:key/history` | GET | `sessions_history` | Get session message history (50 messages) |
 | `/api/session-status` | GET | `sessions_list` | Aggregate token usage across sessions |
+| `/api/live-activity` | GET | `sessions_list` | Infer a small honest Grid activity state from observable session signals |
 | `/api/cron` | GET | `cron` (list) | List all cron jobs with state |
 | `/api/cron/:id/runs` | GET | `cron` (runs) | Get run history for a cron job |
 | `/api/processes` | GET | `process` (list) | List running processes |
@@ -102,6 +103,13 @@ All routes below require valid `mc_token` cookie.
 ### Data Normalization
 - `normalizeSession()` — maps raw gateway session data to frontend-friendly format, infers kind (main/subagent/cron) from session key
 - `aggregateUsage()` — sums input/output tokens and cost across sessions
+- `buildLiveActivity()` — derives Grid activity from `sessions_list` visibility only, currently reliable for recent assistant replies and active sub-agent work
+
+### Live Activity Notes
+- `GET /api/live-activity` is intentionally conservative.
+- It exposes a phase label, detail, observed vs inferred confidence, basis text, and recent structured events for The Grid HUD.
+- Current signal limits matter: on this box, `sessions_list` reliably exposes recent reply history and sub-agent activity, but not a trustworthy full stream of user/tool/reasoning phases.
+- Because of that, the live Grid should treat `done`, `idle`, and `waiting_subagent` as the most trustworthy current states unless richer runtime signals are added later.
 
 ## Backend — `server/auth.ts`
 

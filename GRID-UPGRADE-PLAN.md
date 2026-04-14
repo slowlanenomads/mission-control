@@ -3,11 +3,22 @@
 ## Current State
 - Main agent node in center
 - Sub-agent nodes orbit around it
-- White particles blast outward from center constantly
-- No directional communication flow
-- No status indication on sub-agent nodes
-- No model name shown
-- Particles look like constant activity regardless of actual state
+- Directional packets now show sub-agent spawn/completion/error flow
+- Sub-agent nodes already color by status and show model names
+- Main node now consumes `/api/live-activity` for a small honest HUD state
+- Activity feed now uses structured live events instead of generic fake-looking chatter
+- Grid explicitly marks live state as observed vs inferred and shows its basis
+- Current backend signal source is still limited to observable `sessions_list` activity, so main-session phases are conservative
+
+## V1 Live Activity Now Implemented
+- Backend route: `/api/live-activity`
+- Frontend consumer: `src/pages/TheGrid.tsx`
+- Current trustworthy states:
+  - `done` when the latest visible main-session event is an assistant reply
+  - `waiting_subagent` when a sub-agent session has recent activity
+  - `idle` when there is no stronger observable signal
+- Important limitation:
+  - on this box, `sessions_list` does not currently provide a trustworthy full user/tool/reasoning phase stream, so the Grid should not pretend it can see inner thinking or every tool invocation
 
 ## Goal
 Make the visualization accurately reflect what's happening:
@@ -148,8 +159,14 @@ Upgrade the rendering:
 - Trail behind the dot (3-4 fading copies at previous positions)
 - At 100% progress, brief flash/burst at destination node
 
+## Next Honest Upgrades
+1. Add a richer backend signal source if available, ideally a structured activity stream rather than message snapshots
+2. If that does not exist yet, add an explicit fallback legend in the UI for what the Grid can and cannot currently observe
+3. Consider SSE later for smoother updates, but only after the event model is trustworthy
+4. Keep avoiding fake typing dots or theatrical ambient states that imply more certainty than the data supports
+
 ## File to Modify
-`/root/mission-control/src/pages/TheGrid.tsx` (877 lines)
+`/root/mission-control/src/pages/TheGrid.tsx`
 
 ## Rules
 - Keep the existing canvas rendering approach

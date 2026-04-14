@@ -4,6 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
+import { execFileSync } from 'child_process'
 import {
   createToken, verifyToken, hasUsers, createUser, authenticate,
   checkRateLimit, recordFailedAttempt, clearAttempts,
@@ -301,6 +302,121 @@ function aggregateUsage(sessions: any[]): any {
   return { model, inputTokens, outputTokens, cost: totalCost > 0 ? totalCost : undefined }
 }
 
+function extractToolName(content: string): string | undefined {
+  const firstLine = (content || '').split('\n')[0]?.trim()
+  if (!firstLine) return undefined
+  const match = firstLine.match(/^([A-Za-z0-9_.:-]+)/)
+  return match?.[1]
+}
+
+function buildLiveActivity(sessions: any[]): any {
+  const now = Date.now()
+  const mainSession = sessions.find((s: any) => s.kind === 'main' || s.sessionKey === 'agent:main:main') || sessions[0]
+  const subagentSessions = sessions.filter((s: any) => s.kind === 'subagent')
+
+  const recentMainMessages = [...(mainSession?.recentMessages || [])]
+    .filter((m: any) => m.timestamp)
+    .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+  const latest = recentMainMessages[recentMainMessages.length - 1]
+  const latestTs = latest?.timestamp ? new Date(latest.timestamp).getTime() : 0
+  const latestAgeMs = latestTs ? Math.max(0, now - latestTs) : Infinity
+  const activeSubagents = subagentSessions.filter((s: any) => {
+    if (!s.lastActivity) return false
+    return now - new Date(s.lastActivity).getTime() < 15 * 60 * 1000
+  })
+
+  let phase = 'idle'
+  let label = 'Idle'
+  let detail = 'Waiting for work'
+  let toolName: string | undefined
+  let startedAt = latest?.timestamp || mainSession?.lastActivity || new Date(now).toISOString()
+  let confidence: 'observed' | 'inferred' = 'inferred'
+  const basis: string[] = []
+
+  if (activeSubagents.length > 0) {
+    phase = 'waiting_subagent'
+    label = activeSubagents.length === 1 ? 'Waiting on sub-agent' : `Waiting on ${activeSubagents.length} sub-agents`
+    detail = activeSubagents
+      .slice(0, 2)
+      .map((s: any) => s.label || s.sessionKey.split(':').slice(-1)[0])
+      .join(', ') || 'Sub-agent work in progress'
+    startedAt = activeSubagents[0]?.lastActivity || startedAt
+    confidence = 'observed'
+    basis.push(`${activeSubagents.length} sub-agent session${activeSubagents.length === 1 ? '' : 's'} with recent activity`)
+  } else if (latest?.role === 'assistant' && latestAgeMs < 3 * 60 * 1000) {
+    phase = 'done'
+    label = latestAgeMs < 20 * 1000 ? 'Reply just sent' : 'Reply sent'
+    detail = 'Latest visible event is an assistant response'
+    confidence = 'observed'
+    basis.push('latest visible main-session event is an assistant message')
+  } else {
+    basis.push('current sessions feed here only gives reliable reply history and sub-agent activity')
+    if (latest?.role) basis.push(`latest visible main-session role is ${latest.role}`)
+    else basis.push('no recent visible session activity')
+  }
+
+  const recentEvents = recentMainMessages
+    .slice(-8)
+    .reverse()
+    .map((m: any) => {
+      const tool = m.role === 'tool' ? extractToolName(m.content || '') : undefined
+      if (m.role === 'tool') {
+        return {
+          timestamp: m.timestamp,
+          phase: 'tool_running',
+          label: tool ? `TOOL ${tool}` : 'TOOL',
+          detail: tool ? `Running ${tool}` : 'Tool activity',
+        }
+      }
+      if (m.role === 'user') {
+        return {
+          timestamp: m.timestamp,
+          phase: 'receiving',
+          label: 'RECEIVING',
+          detail: 'Inbound message',
+        }
+      }
+      return {
+        timestamp: m.timestamp,
+        phase: 'done',
+        label: 'REPLY',
+        detail: 'Assistant response',
+      }
+    })
+
+  const waitingEvents = activeSubagents.slice(0, 2).map((s: any) => ({
+    timestamp: s.lastActivity,
+    phase: 'waiting_subagent',
+    label: 'SUBAGENT',
+    detail: `Waiting on ${s.label || s.sessionKey.split(':').slice(-1)[0]}`,
+  }))
+
+  const mergedEvents = [...recentEvents, ...waitingEvents]
+    .filter((e: any) => e.timestamp)
+    .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 10)
+
+  const candidateUpdatedAt = [mainSession?.lastActivity, latest?.timestamp]
+    .filter(Boolean)
+    .sort((a: any, b: any) => new Date(b).getTime() - new Date(a).getTime())[0]
+
+  return {
+    phase,
+    label,
+    detail,
+    toolName,
+    startedAt,
+    updatedAt: candidateUpdatedAt || new Date(now).toISOString(),
+    sessionKey: mainSession?.sessionKey,
+    activeSubagents: activeSubagents.length,
+    confidence,
+    source: 'sessions_list observable activity (replies + sub-agent activity)',
+    basis: basis.join(' • '),
+    recentEvents: mergedEvents,
+  }
+}
+
 // ========= API Routes =========
 
 app.get('/api/sessions', async (req, res) => {
@@ -354,6 +470,22 @@ app.get('/api/session-status', async (_req, res) => {
     const raw = result?.sessions || (Array.isArray(result) ? result : [])
     const usage = aggregateUsage(raw)
     res.json(usage)
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/live-activity', async (_req, res) => {
+  try {
+    const result = await invokeGateway('sessions_list', {
+      activeMinutes: 180,
+      messageLimit: 8,
+    })
+    const raw = result?.sessions || (Array.isArray(result) ? result : [])
+    const sessionMetaMap = readSessionMetaMap()
+    const dreamingEnabled = readDreamingEnabled()
+    const sessions = raw.map((s: any) => normalizeSession(s, sessionMetaMap[s.key || s.sessionKey], dreamingEnabled))
+    res.json(buildLiveActivity(sessions))
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -659,6 +791,63 @@ function parseCompactNumber(str: string): number {
   return parseInt(s.replace(/[^0-9]/g, '')) || 0
 }
 
+function formatTimeUntil(resetAtMs: number, nowMs = Date.now()): string {
+  const diffMs = Math.max(0, resetAtMs - nowMs)
+  const totalMinutes = Math.floor(diffMs / 60000)
+  const days = Math.floor(totalMinutes / (60 * 24))
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
+  const minutes = totalMinutes % 60
+
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${Math.max(0, minutes)}m`
+}
+
+function readStructuredCodexUsage(): Record<string, any> | null {
+  try {
+    const raw = execFileSync('openclaw', ['status', '--usage', '--json'], {
+      encoding: 'utf8',
+      timeout: 15000,
+    })
+    const payload = JSON.parse(stripCliNoise(raw))
+    const providers = Array.isArray(payload?.usage?.providers) ? payload.usage.providers : []
+    const codex = providers.find((provider: any) => provider?.provider === 'openai-codex')
+    const windows = Array.isArray(codex?.windows) ? codex.windows : []
+
+    if (windows.length === 0) return null
+
+    const sessionWindow = windows.find((window: any) => String(window?.label || '').toLowerCase() !== 'week') || windows[0]
+    const weekWindow = windows.find((window: any) => String(window?.label || '').toLowerCase() === 'week')
+
+    const toRemainingPercent = (usedPercent: any) => {
+      const used = Number(usedPercent)
+      if (!Number.isFinite(used)) return null
+      return Math.max(0, Math.min(100, Math.round((100 - used) * 10) / 10))
+    }
+
+    const usage: Record<string, any> = { source: 'structured' }
+
+    if (sessionWindow) {
+      usage.windowLabel = sessionWindow.label || '5h'
+      usage.windowPercentLeft = toRemainingPercent(sessionWindow.usedPercent)
+      usage.windowTimeLeft = sessionWindow.resetAt ? formatTimeUntil(Number(sessionWindow.resetAt)) : null
+      usage.windowResetAt = sessionWindow.resetAt ? new Date(Number(sessionWindow.resetAt)).toISOString() : null
+    }
+
+    if (weekWindow) {
+      usage.weekLabel = weekWindow.label || 'Week'
+      usage.weekPercentLeft = toRemainingPercent(weekWindow.usedPercent)
+      usage.weekTimeLeft = weekWindow.resetAt ? formatTimeUntil(Number(weekWindow.resetAt)) : null
+      usage.weekResetAt = weekWindow.resetAt ? new Date(Number(weekWindow.resetAt)).toISOString() : null
+    }
+
+    return usage
+  } catch (e: any) {
+    console.warn('Failed to read structured Codex usage:', e?.message || e)
+    return null
+  }
+}
+
 function parseSessionStatusText(raw: string): Record<string, any> {
   const result: Record<string, any> = { raw }
   const warnings: string[] = []
@@ -801,6 +990,14 @@ app.get('/api/session-status-live', async (_req, res) => {
     }
 
     const parsed = parseSessionStatusText(statusText)
+    const structuredUsage = readStructuredCodexUsage()
+    if (structuredUsage?.windowPercentLeft != null || structuredUsage?.weekPercentLeft != null) {
+      parsed.usage = {
+        ...(parsed.usage || {}),
+        ...structuredUsage,
+      }
+    }
+
     const sessionMeta = readSessionMetaMap()['agent:main:main'] || {}
     if (!parsed.runtime) parsed.runtime = {}
     if (sessionMeta?.thinkingLevel && !parsed.runtime.thinking) parsed.runtime.thinking = sessionMeta.thinkingLevel
