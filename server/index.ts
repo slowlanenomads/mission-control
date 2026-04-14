@@ -23,6 +23,7 @@ if (!GATEWAY_TOKEN) {
 
 const DATA_DIR = path.join(__dirname, '../data')
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json')
+const CRON_JOBS_FILE = path.join(os.homedir(), '.openclaw/cron/jobs.json')
 const PROTECTED_FILES = ['AGENTS.md', 'SOUL.md']
 
 app.use(cors({ origin: ['http://76.13.107.133:3333', 'http://localhost:3333'], credentials: true }))
@@ -552,23 +553,27 @@ function safeCronId(id: string): string {
 
 app.get('/api/cron', async (_req, res) => {
   try {
-    const { execSync } = require('child_process')
-    const raw = execSync('openclaw cron list --json 2>/dev/null', { timeout: 10000 }).toString()
-    const result = JSON.parse(stripCliNoise(raw))
-    
-    // Normalize cron job format for frontend
-    const rawJobs = result?.jobs || (Array.isArray(result) ? result : [])
+    let rawJobs: any[] = []
+
+    if (fs.existsSync(CRON_JOBS_FILE)) {
+      const payload = JSON.parse(fs.readFileSync(CRON_JOBS_FILE, 'utf8'))
+      rawJobs = payload?.jobs || (Array.isArray(payload) ? payload : [])
+    } else {
+      const result = await invokeGateway('cron', { action: 'list' })
+      rawJobs = result?.jobs || (Array.isArray(result) ? result : [])
+    }
+
     const jobs = rawJobs.map((j: any) => ({
-      id: j.id,
-      name: j.name || j.id,
+      id: j.id || j.jobId,
+      name: j.name || j.id || j.jobId,
       text: j.payload?.message || j.payload?.text || j.text,
       schedule: j.schedule?.expr || j.schedule || '',
       enabled: j.enabled !== false,
       lastRun: j.state?.lastRunAtMs ? new Date(j.state.lastRunAtMs).toISOString() : undefined,
       nextRun: j.state?.nextRunAtMs ? new Date(j.state.nextRunAtMs).toISOString() : undefined,
       lastStatus: j.state?.lastStatus,
-      model: j.model,
-      channel: j.channel,
+      model: j.payload?.model || j.model,
+      channel: j.delivery?.channel || j.channel,
     }))
     res.json({ jobs })
   } catch (e: any) {

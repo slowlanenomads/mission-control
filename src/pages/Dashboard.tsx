@@ -36,7 +36,17 @@ interface LiveSessionStatus {
   tokens?: { input: number; output: number; total: number }
   cache?: { hitPercent: number; cachedTokens: number; newTokens: number }
   context?: { used: number; max: number; percent: number; compactions: number }
-  usage?: { windowPercentLeft: number; windowTimeLeft: string; weekPercentLeft: number; weekTimeLeft: string }
+  usage?: {
+    windowPercentLeft: number
+    windowTimeLeft: string
+    weekPercentLeft: number
+    weekTimeLeft: string
+    windowLabel?: string
+    weekLabel?: string
+    windowResetAt?: string | null
+    weekResetAt?: string | null
+    source?: string
+  }
   runtime?: { mode: string; thinking: string; elevated: boolean }
   queue?: { name: string; depth: number }
   fastMode?: boolean | null
@@ -72,11 +82,15 @@ function formatTokens(n: number): string {
   return n.toString()
 }
 
+function formatPercent(n: number): string {
+  return Number.isInteger(n) ? `${n}%` : `${n.toFixed(1)}%`
+}
+
 export default function Dashboard() {
   const { data: sessions, loading: sessionsLoading } = useApi<Session[]>('/api/sessions', { interval: 15000 })
   const { data: sessionStatus, loading: statusLoading } = useApi<SessionStatus>('/api/session-status', { interval: 30000 })
   const { data: liveStatus, loading: liveLoading } = useApi<LiveSessionStatus>('/api/session-status-live', { interval: 30000 })
-  const { data: cronData, loading: cronLoading } = useApi<any>('/api/cron', { interval: 60000 })
+  const { data: cronData, loading: cronLoading, error: cronError } = useApi<any>('/api/cron', { interval: 60000 })
   const { toast } = useToast()
   const syncAction = useAction()
   const restartAction = useAction()
@@ -84,8 +98,8 @@ export default function Dashboard() {
   const [showRawStatus, setShowRawStatus] = useState(false)
 
   const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
-  const activeSessions = sessionList.filter(s => s.status === 'active').length
-  const totalMessages = sessionList.reduce((sum, s) => sum + (s.messageCount || 0), 0)
+  const visibleSessions = sessionList.length
+  const visibleRecentMessages = sessionList.reduce((sum, s) => sum + (s.recentMessages?.length || 0), 0)
   const cronJobs = Array.isArray(cronData) ? cronData : (cronData as any)?.jobs ?? []
   const activeCron = cronJobs.filter((j: any) => j.enabled !== false).length
   const subagentCount = sessionList.filter(s => s.kind === 'subagent').length
@@ -139,10 +153,10 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={Activity} label="Active Sessions" value={activeSessions} subtitle={`${sessionList.length} total`} color="text-green-400" />
-          <StatCard icon={MessageSquare} label="Messages Today" value={totalMessages} subtitle="across all sessions" color="text-blue-400" />
-          <StatCard icon={Clock} label="Cron Jobs" value={activeCron} subtitle={`${cronJobs.length} total`} color="text-orange-400" loading={cronLoading && cronJobs.length === 0} />
-          <StatCard icon={Users} label="Sub-agents" value={subagentCount} subtitle="spawned from sessions" color="text-purple-400" />
+          <StatCard icon={Activity} label="Visible Sessions" value={visibleSessions} subtitle="current dashboard snapshot" color="text-green-400" />
+          <StatCard icon={MessageSquare} label="Recent Messages" value={visibleRecentMessages} subtitle="loaded into this snapshot" color="text-blue-400" />
+          <StatCard icon={Clock} label="Cron Jobs" value={cronError ? '—' : activeCron} subtitle={cronError ? 'cron data unavailable' : `${cronJobs.length} total`} color="text-orange-400" loading={cronLoading && cronJobs.length === 0 && !cronError} />
+          <StatCard icon={Users} label="Sub-agent Sessions" value={subagentCount} subtitle="visible in current snapshot" color="text-purple-400" />
         </div>
       )}
 
@@ -329,20 +343,20 @@ export default function Dashboard() {
                   <div className="border-t border-gray-800/50 pt-3">
                     <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Remaining</p>
                     <div className="grid grid-cols-2 gap-2">
-                      <div className="bg-gray-800/50 rounded-lg p-2">
+                      <div className="bg-gray-800/50 rounded-lg p-2" title={liveStatus.usage.windowResetAt ? `Resets ${new Date(liveStatus.usage.windowResetAt).toLocaleString()}` : undefined}>
                         <p className="text-[9px] text-gray-500 uppercase mb-0.5">Session</p>
                         <p className={`text-sm font-bold ${
                           liveStatus.usage.windowPercentLeft <= 20 ? 'text-red-400' :
                           liveStatus.usage.windowPercentLeft <= 50 ? 'text-yellow-400' : 'text-green-400'
-                        }`}>{liveStatus.usage.windowPercentLeft}%</p>
+                        }`}>{formatPercent(liveStatus.usage.windowPercentLeft)}</p>
                         <p className="text-[9px] text-gray-500 font-mono">{liveStatus.usage.windowTimeLeft}</p>
                       </div>
-                      <div className="bg-gray-800/50 rounded-lg p-2">
+                      <div className="bg-gray-800/50 rounded-lg p-2" title={liveStatus.usage.weekResetAt ? `Resets ${new Date(liveStatus.usage.weekResetAt).toLocaleString()}` : undefined}>
                         <p className="text-[9px] text-gray-500 uppercase mb-0.5">Week</p>
                         <p className={`text-sm font-bold ${
                           liveStatus.usage.weekPercentLeft <= 20 ? 'text-red-400' :
                           liveStatus.usage.weekPercentLeft <= 50 ? 'text-yellow-400' : 'text-green-400'
-                        }`}>{liveStatus.usage.weekPercentLeft}%</p>
+                        }`}>{formatPercent(liveStatus.usage.weekPercentLeft)}</p>
                         <p className="text-[9px] text-gray-500 font-mono">{liveStatus.usage.weekTimeLeft}</p>
                       </div>
                     </div>
