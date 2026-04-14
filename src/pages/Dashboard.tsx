@@ -27,6 +27,12 @@ interface SessionStatus {
   sessionKey?: string
 }
 
+interface GatewayStatus {
+  ok: boolean
+  status: 'connected' | 'error'
+  error?: string
+}
+
 interface LiveSessionStatus {
   raw?: string
   model?: string
@@ -95,6 +101,7 @@ export default function Dashboard() {
   const { data: sessionStatus, loading: statusLoading } = useApi<SessionStatus>('/api/session-status', { interval: 30000 })
   const { data: liveStatus, loading: liveLoading } = useApi<LiveSessionStatus>('/api/session-status-live', { interval: 30000 })
   const { data: cronData, loading: cronLoading, error: cronError } = useApi<any>('/api/cron', { interval: 60000 })
+  const { data: gatewayStatus } = useApi<GatewayStatus>('/api/gateway/status', { interval: 15000 })
   const { toast } = useToast()
   const syncAction = useAction()
   const restartAction = useAction()
@@ -102,6 +109,8 @@ export default function Dashboard() {
   const [showRawStatus, setShowRawStatus] = useState(false)
 
   const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
+  const gatewayConnected = gatewayStatus?.ok !== false
+  const statusStripModel = liveStatus?.model || sessionStatus?.model || '—'
   const visibleSessions = sessionList.length
   const visibleRecentMessages = sessionList.reduce(
     (sum, s) => sum + ((s.recentMessages || []).filter(hasVisibleMessageContent).length),
@@ -140,17 +149,19 @@ export default function Dashboard() {
       {/* Status bar */}
       <div className="flex flex-wrap items-center gap-4 sm:gap-6 bg-gray-900 border border-gray-800 rounded-xl px-4 sm:px-6 py-3">
         <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-green-400 pulse-dot" />
-          <span className="text-sm font-medium text-green-400">Online</span>
+          <span className={`w-2.5 h-2.5 rounded-full ${gatewayConnected ? 'bg-green-400 pulse-dot' : 'bg-yellow-400'}`} />
+          <span className={`text-sm font-medium ${gatewayConnected ? 'text-green-400' : 'text-yellow-400'}`}>
+            {gatewayConnected ? 'Gateway connected' : 'Gateway degraded'}
+          </span>
         </div>
         <div className="w-px h-5 bg-gray-700 hidden sm:block" />
         <div className="text-sm text-gray-400">
           <span className="text-gray-500">Model:</span>{' '}
-          <span className="font-mono text-gray-300">{sessionStatus?.model || 'claude-opus-4-5'}</span>
+          <span className="font-mono text-gray-300">{statusStripModel}</span>
         </div>
         <div className="w-px h-5 bg-gray-700 hidden sm:block" />
         <div className="text-sm text-gray-400">
-          <span className="text-gray-500">Sessions:</span>{' '}
+          <span className="text-gray-500">Visible sessions:</span>{' '}
           <span className="font-mono text-gray-300">{sessionList.length}</span>
         </div>
       </div>
