@@ -253,7 +253,6 @@ function readDreamingEnabled(): boolean | null {
 }
 
 function normalizeSession(s: any, sessionMeta?: any, dreamingEnabled?: boolean | null): any {
-  // Extract last message timestamps for activity
   const messages = (s.messages || []).map((m: any) => {
     const content = Array.isArray(m.content)
       ? m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join(' ')
@@ -265,11 +264,16 @@ function normalizeSession(s: any, sessionMeta?: any, dreamingEnabled?: boolean |
     }
   })
 
+  const lastActivity = s.updatedAt ? new Date(s.updatedAt).toISOString() : undefined
+  const lastActivityMs = lastActivity ? new Date(lastActivity).getTime() : 0
+  const ageMs = lastActivityMs ? Date.now() - lastActivityMs : Number.POSITIVE_INFINITY
+  const status = ageMs <= 15 * 60 * 1000 ? 'active' : 'idle'
+
   return {
     sessionKey: s.key || s.sessionKey,
     kind: inferSessionKind(s),
-    status: 'active',
-    lastActivity: s.updatedAt ? new Date(s.updatedAt).toISOString() : undefined,
+    status,
+    lastActivity,
     messageCount: s.messageCount ?? (s.messages?.length || 0),
     model: s.model,
     label: s.label,
@@ -615,7 +619,7 @@ app.delete('/api/cron/:id', async (req, res) => {
   try {
     const { execSync } = require('child_process')
     const id = safeCronId(req.params.id)
-    const output = execSync(`openclaw cron delete ${id} 2>/dev/null`, { timeout: 10000 }).toString()
+    const output = execSync(`openclaw cron rm ${id} 2>/dev/null`, { timeout: 10000 }).toString()
     res.json({ ok: true, result: output.trim() })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
@@ -625,18 +629,36 @@ app.delete('/api/cron/:id', async (req, res) => {
 app.post('/api/cron', async (req, res) => {
   try {
     const { execSync } = require('child_process')
-    const { name, schedule, text, enabled = true } = req.body
-    
+    const {
+      name,
+      schedule,
+      payloadType = 'agentTurn',
+      text,
+      sessionTarget = 'isolated',
+      enabled = true,
+    } = req.body
+
     if (!name || !schedule || !text) {
       return res.status(400).json({ error: 'name, schedule, and text are required' })
     }
-    
-    // Build openclaw cron create command — use env vars to avoid shell injection
-    const env = { ...process.env, _CRON_NAME: name, _CRON_SCHED: schedule, _CRON_TEXT: text }
-    let cmd = `openclaw cron create --name "$_CRON_NAME" --schedule "$_CRON_SCHED" --text "$_CRON_TEXT"`
+
+    const env = {
+      ...process.env,
+      _CRON_NAME: String(name),
+      _CRON_SCHED: String(schedule),
+      _CRON_TEXT: String(text),
+      _CRON_SESSION: sessionTarget === 'main' ? 'main' : 'isolated',
+    }
+
+    let cmd = `openclaw cron add --name "$_CRON_NAME" --cron "$_CRON_SCHED"`
+    if (payloadType === 'systemEvent' || sessionTarget === 'main') {
+      cmd += ` --session main --system-event "$_CRON_TEXT"`
+    } else {
+      cmd += ` --session "$_CRON_SESSION" --message "$_CRON_TEXT"`
+    }
     if (!enabled) cmd += ' --disabled'
     cmd += ' 2>/dev/null'
-    
+
     const output = execSync(cmd, { timeout: 10000, env }).toString()
     res.json({ ok: true, result: stripCliNoise(output).trim() })
   } catch (e: any) {
@@ -646,16 +668,27 @@ app.post('/api/cron', async (req, res) => {
 
 app.get('/api/cron/:id/runs', async (req, res) => {
   try {
-    const { execSync } = require('child_process')
-    try {
-      const id = safeCronId(req.params.id)
-      const output = execSync(`openclaw cron runs ${id} --json 2>/dev/null`, { timeout: 10000 }).toString()
-      const result = JSON.parse(stripCliNoise(output))
-      res.json(result)
-    } catch {
-      // If the command fails or returns no data, return empty array
-      res.json({ runs: [] })
-    }
+    const id = safeCronId(req.params.id)
+    const runsFile = path.join(os.homedir(), '.openclaw/cron/runs', `${id}.jsonl`)
+    if (!fs.existsSync(runsFile)) return res.json({ runs: [] })
+
+    const runs = fs.readFileSync(runsFile, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line: string) => {
+        try { return JSON.parse(line) } catch { return null }
+      })
+      .filter((entry: any) => entry && entry.action === 'finished')
+      .map((entry: any) => ({
+        runId: entry.sessionId || entry.ts,
+        startedAt: entry.runAtMs ? new Date(entry.runAtMs).toISOString() : undefined,
+        finishedAt: entry.ts ? new Date(entry.ts).toISOString() : undefined,
+        status: entry.status === 'ok' ? 'success' : entry.status,
+        summary: entry.summary,
+      }))
+      .sort((a: any, b: any) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
+
+    res.json({ runs })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -1605,42 +1638,49 @@ app.post('/api/system/restart/:service', (req, res) => {
 app.get('/api/cost/summary', (req, res) => {
   try {
     const sessionsDir = '/root/.openclaw/agents/main/sessions/'
-    if (!fs.existsSync(sessionsDir)) return res.json({ daily: [], total: 0 })
-    
+    if (!fs.existsSync(sessionsDir)) {
+      return res.json({
+        totalCost30Days: 0,
+        todayCost: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        dailyCosts: [],
+        modelBreakdown: [],
+      })
+    }
+
     const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.jsonl') && !f.includes('.lock'))
-    
-    // Aggregate by date and model
     const dailyCosts: Record<string, { date: string, cost: number, inputTokens: number, outputTokens: number, cacheRead: number, byModel: Record<string, { cost: number, input: number, output: number }> }> = {}
-    
+
     for (const file of files) {
       try {
         const content = fs.readFileSync(path.join(sessionsDir, file), 'utf-8')
         const lines = content.trim().split('\n')
         let currentModel = ''
-        
+
         for (const line of lines) {
           let parsed: any
           try { parsed = JSON.parse(line) } catch { continue }
-          
+
           if (parsed.type === 'model_change') currentModel = parsed.modelId || currentModel
-          
+
           if (parsed.type === 'message') {
             const usage = parsed.usage || parsed.message?.usage || {}
             if (!usage.cost?.total) continue
-            
+
             const ts = parsed.timestamp || ''
-            const date = ts.slice(0, 10) // YYYY-MM-DD
+            const date = ts.slice(0, 10)
             if (!date) continue
-            
+
             if (!dailyCosts[date]) {
               dailyCosts[date] = { date, cost: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, byModel: {} }
             }
-            
+
             dailyCosts[date].cost += usage.cost.total
             dailyCosts[date].inputTokens += usage.input || 0
             dailyCosts[date].outputTokens += usage.output || 0
             dailyCosts[date].cacheRead += usage.cacheRead || 0
-            
+
             const model = currentModel || 'unknown'
             if (!dailyCosts[date].byModel[model]) {
               dailyCosts[date].byModel[model] = { cost: 0, input: 0, output: 0 }
@@ -1652,17 +1692,57 @@ app.get('/api/cost/summary', (req, res) => {
         }
       } catch { continue }
     }
-    
-    const daily = Object.values(dailyCosts)
+
+    const recentDaily = Object.values(dailyCosts)
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 30) // Last 30 days
-      .map(d => ({ ...d, cost: Math.round(d.cost * 10000) / 10000 }))
-    
-    const totalCost = daily.reduce((sum, d) => sum + d.cost, 0)
-    const totalInput = daily.reduce((sum, d) => sum + d.inputTokens, 0)
-    const totalOutput = daily.reduce((sum, d) => sum + d.outputTokens, 0)
-    
-    res.json({ daily, totalCost: Math.round(totalCost * 100) / 100, totalInput, totalOutput })
+      .slice(0, 30)
+
+    const totalCost30Days = recentDaily.reduce((sum, d) => sum + d.cost, 0)
+    const totalInputTokens = recentDaily.reduce((sum, d) => sum + d.inputTokens, 0)
+    const totalOutputTokens = recentDaily.reduce((sum, d) => sum + d.outputTokens, 0)
+    const todayIso = new Date().toISOString().slice(0, 10)
+    const todayCost = recentDaily.find(d => d.date === todayIso)?.cost || 0
+
+    const aggregateByModel: Record<string, { cost: number, inputTokens: number, outputTokens: number }> = {}
+    for (const day of recentDaily) {
+      for (const [model, data] of Object.entries(day.byModel)) {
+        if (!aggregateByModel[model]) aggregateByModel[model] = { cost: 0, inputTokens: 0, outputTokens: 0 }
+        aggregateByModel[model].cost += data.cost
+        aggregateByModel[model].inputTokens += data.input
+        aggregateByModel[model].outputTokens += data.output
+      }
+    }
+
+    const dailyCostsResponse = recentDaily.map(d => ({
+      date: d.date,
+      cost: Math.round(d.cost * 10000) / 10000,
+      models: Object.entries(d.byModel)
+        .map(([model, data]) => ({ model, cost: Math.round(data.cost * 10000) / 10000, color: '' }))
+        .sort((a, b) => b.cost - a.cost),
+    }))
+
+    const modelBreakdown = Object.entries(aggregateByModel)
+      .map(([model, data]) => ({
+        model,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
+        cost: Math.round(data.cost * 10000) / 10000,
+        percentage: totalCost30Days > 0 ? Math.round((data.cost / totalCost30Days) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.cost - a.cost)
+
+    res.json({
+      totalCost30Days: Math.round(totalCost30Days * 100) / 100,
+      todayCost: Math.round(todayCost * 10000) / 10000,
+      totalInputTokens,
+      totalOutputTokens,
+      dailyCosts: dailyCostsResponse,
+      modelBreakdown,
+      daily: recentDaily,
+      totalCost: Math.round(totalCost30Days * 100) / 100,
+      totalInput: totalInputTokens,
+      totalOutput: totalOutputTokens,
+    })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
@@ -1710,26 +1790,45 @@ app.get('/api/cost/openrouter', async (req, res) => {
 
 app.get('/api/empire/status', async (_req, res) => {
   try {
-    // Hit dev and prod Empire APIs
-    const results: any = {}
-    
+    const services: any[] = []
+
     for (const [env, port] of [['dev', 8001], ['prod', 8000]]) {
       try {
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 5000)
         const r = await fetch(`http://localhost:${port}/api/sync/status`, { signal: controller.signal })
         clearTimeout(timeout)
+
         if (r.ok) {
-          results[env] = { status: 'online', sync: await r.json() }
+          const sync = await r.json()
+          services.push({
+            name: env,
+            status: 'online',
+            sync: {
+              isRunning: Boolean(sync?.isRunning || sync?.is_running),
+              lastRun: sync?.lastRun || sync?.last_run,
+              progress: sync?.progress,
+            },
+            counts: sync?.counts,
+          })
         } else {
-          results[env] = { status: 'online', error: `HTTP ${r.status}` }
+          services.push({
+            name: env,
+            status: 'online',
+            sync: { isRunning: false },
+            error: `HTTP ${r.status}`,
+          })
         }
       } catch {
-        results[env] = { status: 'offline' }
+        services.push({
+          name: env,
+          status: 'offline',
+          sync: { isRunning: false },
+        })
       }
     }
-    
-    res.json(results)
+
+    res.json({ services })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   }

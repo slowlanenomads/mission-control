@@ -78,7 +78,7 @@ function SessionRow({ session }: { session: Session }) {
             <StatusBadge color={statusColor(session.status)} dot>{session.status}</StatusBadge>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs text-gray-500">
-            <span>{session.messageCount} messages</span>
+            <span>{session.messageCount} feed msgs</span>
             {session.model && <span className="font-mono">{session.model}</span>}
             {session.lastActivity && (
               <span>{formatDistanceToNow(new Date(session.lastActivity), { addSuffix: true })}</span>
@@ -146,7 +146,7 @@ export default function Sessions() {
         <div>
           <h2 className="text-xl font-bold">Sessions</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            {sessionList.length > 0 ? `${sessionList.length} session${sessionList.length !== 1 ? 's' : ''} active` : 'Browse and inspect active sessions'}
+            {sessionList.length > 0 ? `${sessionList.length} visible session${sessionList.length !== 1 ? 's' : ''}` : 'Browse and inspect visible sessions'}
           </p>
         </div>
         <button
@@ -166,8 +166,8 @@ export default function Sessions() {
       ) : sessionList.length === 0 ? (
         <div className="text-center py-20">
           <MessageSquare className="w-10 h-10 text-gray-700 mx-auto mb-3" />
-          <p className="text-gray-500">No active sessions</p>
-          <p className="text-xs text-gray-600 mt-1">Sessions appear here when the agent is running</p>
+          <p className="text-gray-500">No visible sessions</p>
+          <p className="text-xs text-gray-600 mt-1">This view shows sessions currently returned by the live sessions feed</p>
         </div>
       ) : (
         <div className="space-y-3">

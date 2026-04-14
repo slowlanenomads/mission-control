@@ -181,7 +181,7 @@ export default function CostTracker() {
           icon={TrendingUp}
           label="Today's Cost"
           value={formatCurrency(costSummary?.todayCost || 0)}
-          subtitle="current session"
+          subtitle="all tracked sessions today"
           color="text-green-400"
           loading={loading && !costSummary}
         />

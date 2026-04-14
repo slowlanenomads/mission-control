@@ -10,7 +10,7 @@ import { useToast } from '../components/Toast'
 interface SystemHealthData {
   services: Array<{
     name: string
-    status: 'active' | 'inactive'
+    status: 'active' | 'inactive' | 'error'
   }>
   cpu: {
     cores: number
@@ -166,14 +166,15 @@ export default function SystemHealth() {
           {SERVICES.map(serviceName => {
             const service = services.find(s => s.name === serviceName)
             const isActive = service?.status === 'active'
+            const isError = service?.status === 'error'
             const canRestart = serviceName !== 'openclaw-gateway'
             
             return (
               <div key={serviceName} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-gray-200 truncate">{serviceName}</h3>
-                  <StatusBadge color={isActive ? 'green' : 'red'} dot>
-                    {isActive ? 'active' : 'inactive'}
+                  <StatusBadge color={isActive ? 'green' : isError ? 'yellow' : 'red'} dot>
+                    {isActive ? 'active' : isError ? 'error' : 'inactive'}
                   </StatusBadge>
                 </div>
                 {canRestart && (
@@ -209,7 +210,16 @@ export default function SystemHealth() {
                 </div>
                 {liveStatus.updated && <span className="text-[11px] text-gray-400 font-mono bg-gray-800/70 px-2 py-0.5 rounded">updated {liveStatus.updated}</span>}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <p className="text-[10px] text-gray-500 uppercase mb-1">Thinking</p>
+                  <p className={`text-lg font-bold font-mono ${
+                    liveStatus.runtime?.thinking === 'off' ? 'text-gray-300' :
+                    liveStatus.runtime?.thinking === 'minimal' || liveStatus.runtime?.thinking === 'low' ? 'text-blue-400' :
+                    liveStatus.runtime?.thinking === 'medium' ? 'text-purple-400' : 'text-fuchsia-400'
+                  }`}>{liveStatus.runtime?.thinking || 'off'}</p>
+                  <p className="text-[10px] text-gray-500">current session level</p>
+                </div>
                 <div className="bg-gray-800/50 rounded-lg p-4">
                   <p className="text-[10px] text-gray-500 uppercase mb-1">Tokens</p>
                   <p className="text-lg font-bold text-cyan-400">{formatTokens(liveStatus.tokens?.total)}</p>

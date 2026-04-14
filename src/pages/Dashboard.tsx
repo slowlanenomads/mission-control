@@ -86,6 +86,10 @@ function formatPercent(n: number): string {
   return Number.isInteger(n) ? `${n}%` : `${n.toFixed(1)}%`
 }
 
+function hasVisibleMessageContent(message?: { content?: string | null }): boolean {
+  return Boolean(message?.content && message.content.trim())
+}
+
 export default function Dashboard() {
   const { data: sessions, loading: sessionsLoading } = useApi<Session[]>('/api/sessions', { interval: 15000 })
   const { data: sessionStatus, loading: statusLoading } = useApi<SessionStatus>('/api/session-status', { interval: 30000 })
@@ -99,7 +103,10 @@ export default function Dashboard() {
 
   const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
   const visibleSessions = sessionList.length
-  const visibleRecentMessages = sessionList.reduce((sum, s) => sum + (s.recentMessages?.length || 0), 0)
+  const visibleRecentMessages = sessionList.reduce(
+    (sum, s) => sum + ((s.recentMessages || []).filter(hasVisibleMessageContent).length),
+    0,
+  )
   const cronJobs = Array.isArray(cronData) ? cronData : (cronData as any)?.jobs ?? []
   const activeCron = cronJobs.filter((j: any) => j.enabled !== false).length
   const subagentCount = sessionList.filter(s => s.kind === 'subagent').length
@@ -108,8 +115,10 @@ export default function Dashboard() {
   const costPer1k = totalTokens > 0 && sessionStatus?.cost != null ? ((sessionStatus.cost / totalTokens) * 1000) : null
 
   const activityFeed = sessionList
-    .filter(s => s.recentMessages && s.recentMessages.length > 0)
-    .flatMap(s => (s.recentMessages || []).map(msg => ({ sessionKey: s.sessionKey, kind: s.kind, role: msg.role, content: msg.content, timestamp: msg.timestamp })))
+    .filter(s => s.recentMessages && s.recentMessages.some(hasVisibleMessageContent))
+    .flatMap(s => (s.recentMessages || [])
+      .filter(hasVisibleMessageContent)
+      .map(msg => ({ sessionKey: s.sessionKey, kind: s.kind, role: msg.role, content: msg.content, timestamp: msg.timestamp })))
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 15)
 
@@ -154,7 +163,7 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard icon={Activity} label="Visible Sessions" value={visibleSessions} subtitle="current dashboard snapshot" color="text-green-400" />
-          <StatCard icon={MessageSquare} label="Recent Messages" value={visibleRecentMessages} subtitle="loaded into this snapshot" color="text-blue-400" />
+          <StatCard icon={MessageSquare} label="Recent Messages" value={visibleRecentMessages} subtitle="non-empty messages in this snapshot" color="text-blue-400" />
           <StatCard icon={Clock} label="Cron Jobs" value={cronError ? '—' : activeCron} subtitle={cronError ? 'cron data unavailable' : `${cronJobs.length} total`} color="text-orange-400" loading={cronLoading && cronJobs.length === 0 && !cronError} />
           <StatCard icon={Users} label="Sub-agent Sessions" value={subagentCount} subtitle="visible in current snapshot" color="text-purple-400" />
         </div>

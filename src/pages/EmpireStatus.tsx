@@ -25,6 +25,7 @@ interface EmpireService {
   status: 'online' | 'offline'
   sync: SyncStatus
   counts?: EmpireCounts
+  error?: string
 }
 
 interface EmpireStatusData {
@@ -63,8 +64,14 @@ function ServiceCard({ service }: { service: EmpireService }) {
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-colors">
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-lg font-semibold text-gray-200 capitalize">{service.name}</h3>
-        <StatusBadge color="green" dot>Online</StatusBadge>
+        <StatusBadge color={service.error ? 'yellow' : 'green'} dot>{service.error ? 'Reachable, limited' : 'Online'}</StatusBadge>
       </div>
+
+      {service.error && (
+        <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-200">
+          Sync details unavailable: {service.error}
+        </div>
+      )}
 
       {/* Sync Status */}
       <div className="mb-6">
