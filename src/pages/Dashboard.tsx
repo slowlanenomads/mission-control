@@ -97,7 +97,7 @@ function hasVisibleMessageContent(message?: { content?: string | null }): boolea
 }
 
 export default function Dashboard() {
-  const { data: sessions, loading: sessionsLoading } = useApi<Session[]>('/api/sessions', { interval: 15000 })
+  const { data: sessions, loading: sessionsLoading } = useApi<Session[]>('/api/sessions?activeMinutes=180&messageLimit=3', { interval: 15000 })
   const { data: sessionStatus, loading: statusLoading } = useApi<SessionStatus>('/api/session-status', { interval: 30000 })
   const { data: liveStatus, loading: liveLoading } = useApi<LiveSessionStatus>('/api/session-status-live', { interval: 30000 })
   const { data: cronData, loading: cronLoading, error: cronError } = useApi<any>('/api/cron', { interval: 60000 })
@@ -116,6 +116,7 @@ export default function Dashboard() {
     (sum, s) => sum + ((s.recentMessages || []).filter(hasVisibleMessageContent).length),
     0,
   )
+  const sessionsWithPreview = sessionList.filter(s => (s.recentMessages || []).some(hasVisibleMessageContent)).length
   const cronJobs = Array.isArray(cronData) ? cronData : (cronData as any)?.jobs ?? []
   const activeCron = cronJobs.filter((j: any) => j.enabled !== false).length
   const subagentCount = sessionList.filter(s => s.kind === 'subagent').length
@@ -173,10 +174,10 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={Activity} label="Visible Sessions" value={visibleSessions} subtitle="current dashboard snapshot" color="text-green-400" />
-          <StatCard icon={MessageSquare} label="Recent Messages" value={visibleRecentMessages} subtitle="non-empty messages in this snapshot" color="text-blue-400" />
+          <StatCard icon={Activity} label="Visible Sessions" value={visibleSessions} subtitle="last 3h snapshot" color="text-green-400" />
+          <StatCard icon={MessageSquare} label="Preview Messages" value={visibleRecentMessages} subtitle={`${sessionsWithPreview} session${sessionsWithPreview !== 1 ? 's' : ''} with text preview`} color="text-blue-400" />
           <StatCard icon={Clock} label="Cron Jobs" value={cronError ? '—' : activeCron} subtitle={cronError ? 'cron data unavailable' : `${cronJobs.length} total`} color="text-orange-400" loading={cronLoading && cronJobs.length === 0 && !cronError} />
-          <StatCard icon={Users} label="Sub-agent Sessions" value={subagentCount} subtitle="visible in current snapshot" color="text-purple-400" />
+          <StatCard icon={Users} label="Sub-agent Sessions" value={subagentCount} subtitle="visible in last 3h" color="text-purple-400" />
         </div>
       )}
 
@@ -208,9 +209,12 @@ export default function Dashboard() {
         {/* Activity feed */}
         <div className="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl">
           <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-yellow-400" />
-              <h3 className="font-semibold text-sm">Recent Activity</h3>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-yellow-400" />
+                <h3 className="font-semibold text-sm">Recent Activity</h3>
+              </div>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">preview feed only</span>
             </div>
             {sessionsLoading && <span className="text-[10px] text-gray-500 font-mono animate-pulse">refreshing...</span>}
           </div>
@@ -219,7 +223,7 @@ export default function Dashboard() {
           ) : (
             <div className="divide-y divide-gray-800/50 max-h-[420px] overflow-y-auto">
               {activityFeed.length === 0 ? (
-                <div className="px-6 py-12 text-center text-gray-500 text-sm">No recent activity</div>
+                <div className="px-6 py-12 text-center text-gray-500 text-sm">No preview activity in the current 3h snapshot</div>
               ) : (
                 activityFeed.map((item, i) => (
                   <div key={`${item.sessionKey}-${i}`} className={`px-6 py-3 border-l-2 ${kindAccent(item.kind)} hover:bg-gray-800/30 transition-colors`}>

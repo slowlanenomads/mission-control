@@ -15,6 +15,7 @@ interface Session {
   lastActivity: string
   messageCount: number
   model?: string
+  recentMessages?: Array<{ role: string; content: string; timestamp: string }>
 }
 
 interface HistoryMessage {
@@ -36,6 +37,10 @@ function statusColor(status: string): string {
   return 'gray'
 }
 
+function hasPreviewText(message?: { content?: string | null }): boolean {
+  return Boolean(message?.content && message.content.trim())
+}
+
 function SessionRow({ session }: { session: Session }) {
   const [expanded, setExpanded] = useState(false)
   const [msgText, setMsgText] = useState('')
@@ -46,6 +51,7 @@ function SessionRow({ session }: { session: Session }) {
   )
 
   const messages: HistoryMessage[] = Array.isArray(history) ? history : (history as any)?.messages ?? []
+  const previewCount = (session.recentMessages || []).filter(hasPreviewText).length
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,7 +84,7 @@ function SessionRow({ session }: { session: Session }) {
             <StatusBadge color={statusColor(session.status)} dot>{session.status}</StatusBadge>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs text-gray-500">
-            <span>{session.messageCount} feed msgs</span>
+            <span>{previewCount > 0 ? `${previewCount} preview msg${previewCount !== 1 ? 's' : ''}` : 'no preview text in feed'}</span>
             {session.model && <span className="font-mono">{session.model}</span>}
             {session.lastActivity && (
               <span>{formatDistanceToNow(new Date(session.lastActivity), { addSuffix: true })}</span>
@@ -137,8 +143,14 @@ function SessionRow({ session }: { session: Session }) {
 }
 
 export default function Sessions() {
-  const { data: sessions, loading, error, refetch } = useApi<any>('/api/sessions', { interval: 30000 })
-  const sessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
+  const { data: sessions, loading, error, refetch } = useApi<any>('/api/sessions?activeMinutes=1440&messageLimit=3', { interval: 30000 })
+  const rawSessionList: Session[] = Array.isArray(sessions) ? sessions : (sessions as any)?.sessions ?? []
+  const sessionList = [...rawSessionList].sort((a, b) => {
+    const statusRank = (s: Session) => s.status === 'active' ? 0 : s.status === 'idle' ? 1 : 2
+    const rankDiff = statusRank(a) - statusRank(b)
+    if (rankDiff !== 0) return rankDiff
+    return new Date(b.lastActivity || 0).getTime() - new Date(a.lastActivity || 0).getTime()
+  })
 
   return (
     <div className="space-y-6">
@@ -156,6 +168,9 @@ export default function Sessions() {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
+      </div>
+      <div className="rounded-lg border border-gray-800 bg-gray-900/70 px-4 py-3 text-xs text-gray-400">
+        Row status and preview text come from the live sessions feed. Expanding a row loads actual session history.
       </div>
       {error && !sessions ? (
         <ErrorState error={error} onRetry={refetch} />
